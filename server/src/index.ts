@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import * as QRCode from "qrcode";
 import prisma, { logActivity } from "./logger";
 import whatsappRouter, { sendRewardScreen, sendInteractiveButtons } from "./whatsapp";
+import { getFileStreamFromDrive } from "./drive";
 
 dotenv.config();
 
@@ -207,6 +208,16 @@ app.get("/api/submissions", async (req, res) => {
 // Approve submission
 app.post("/api/submissions/:id/approve", async (req, res) => {
     try {
+        const current = await prisma.submission.findUnique({ where: { id: req.params.id } });
+        if (!current) {
+            res.status(404).json({ error: "Submission not found" });
+            return;
+        }
+        if (current.verificationStatus === "VERIFIED") {
+            res.json(current);
+            return;
+        }
+
         const submission = await prisma.submission.update({
             where: { id: req.params.id },
             data: { verificationStatus: "VERIFIED", reviewFlag: false },
@@ -238,6 +249,16 @@ app.post("/api/submissions/:id/approve", async (req, res) => {
 // Reject submission
 app.post("/api/submissions/:id/reject", async (req, res) => {
     try {
+        const current = await prisma.submission.findUnique({ where: { id: req.params.id } });
+        if (!current) {
+            res.status(404).json({ error: "Submission not found" });
+            return;
+        }
+        if (current.verificationStatus === "REJECTED") {
+            res.json(current);
+            return;
+        }
+
         const submission = await prisma.submission.update({
             where: { id: req.params.id },
             data: { verificationStatus: "REJECTED", reviewFlag: false },
@@ -275,6 +296,43 @@ app.post("/api/submissions/:id/reject", async (req, res) => {
     } catch (err) {
         console.error("Reject error:", err);
         res.status(500).json({ error: "Failed to reject submission" });
+    }
+});
+
+// Stream image
+app.get("/api/submissions/:id/image", async (req, res) => {
+    try {
+        const submission = await prisma.submission.findUnique({
+            where: { id: req.params.id },
+            select: { mediaUrl: true }
+        });
+
+        if (!submission || !submission.mediaUrl) {
+            res.status(404).json({ error: "Image not found" });
+            return;
+        }
+
+        // If mediaUrl is a local path (legacy submissions before drive integration)
+        if (submission.mediaUrl.endsWith(".jpg") || submission.mediaUrl.endsWith(".png") || submission.mediaUrl.includes("/")) {
+            const fs = await import("fs");
+            if (fs.existsSync(submission.mediaUrl)) {
+                res.setHeader("Content-Type", "image/jpeg");
+                fs.createReadStream(submission.mediaUrl).pipe(res);
+                return;
+            } else {
+                res.status(404).json({ error: "Legacy local image not found" });
+                return;
+            }
+        }
+
+        // Fetch from Google Drive
+        const stream = await getFileStreamFromDrive(submission.mediaUrl);
+        res.setHeader("Content-Type", "image/jpeg");
+        stream.pipe(res);
+
+    } catch (err) {
+        console.error("Error streaming image:", err);
+        res.status(500).json({ error: "Failed to fetch image" });
     }
 });
 

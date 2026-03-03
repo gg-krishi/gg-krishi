@@ -4,6 +4,7 @@ import * as path from "path";
 import * as https from "https";
 import prisma, { logActivity } from "./logger";
 import { analyzeImage } from "./ai";
+import { uploadFileToDrive } from "./drive";
 import { computeImageHash, checkDuplicateImage } from "./fraud";
 
 const router = Router();
@@ -13,12 +14,6 @@ const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
 const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "";
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-// Ensure uploads directory exists
-const UPLOADS_DIR = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(UPLOADS_DIR)) {
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
 
 // ─── Webhook Verification (GET) ─────────────────────────────────────
 router.get("/", (req: Request, res: Response) => {
@@ -449,9 +444,25 @@ async function handleImage(
     await sendWhatsAppMessage(phone, processingMsg);
 
     try {
-        // Download image
-        const imagePath = await downloadWhatsAppMedia(mediaId, submission.id);
-        const hash = computeImageHash(imagePath);
+        // Download image into memory buffer
+        const buffer = await downloadWhatsAppMedia(mediaId, submission.id);
+        const hash = computeImageHash(buffer);
+
+        let driveFileId: string;
+        try {
+            driveFileId = await uploadFileToDrive(buffer, `${submission.id}.jpg`, "image/jpeg");
+        } catch (uploadErr) {
+            console.error("Drive upload failed", uploadErr);
+            await logActivity({
+                event: "DRIVE_UPLOAD_FAILED",
+                sessionId: session.id,
+                bagId: session.bagId,
+                submissionId: submission.id,
+                level: "ERROR",
+                details: { error: String(uploadErr) },
+            });
+            throw uploadErr;
+        }
 
         await logActivity({
             event: "IMAGE_RECEIVED",
@@ -459,7 +470,7 @@ async function handleImage(
             bagId: session.bagId,
             submissionId: submission.id,
             phone,
-            details: { imageSha256: hash },
+            details: { imageSha256: hash, driveFileId },
         });
 
         // Check for duplicate image
@@ -482,7 +493,7 @@ async function handleImage(
             await prisma.submission.update({
                 where: { id: submission.id },
                 data: {
-                    mediaUrl: imagePath,
+                    mediaUrl: driveFileId,
                     mediaHash: hash,
                     verificationStatus: "VERIFIED",
                     aiConfidence: 0.99,
@@ -526,7 +537,7 @@ async function handleImage(
         // 5. AI image sanity check (liberal threshold)
         let aiResult;
         try {
-            aiResult = await analyzeImage(imagePath);
+            aiResult = await analyzeImage({ buffer, mimeType: "image/jpeg" });
             await logActivity({
                 event: "AI_ANALYSIS_COMPLETE",
                 sessionId: session.id,
@@ -552,7 +563,8 @@ async function handleImage(
                 details: { error: String(aiErr) },
             });
             // AI failure is not a blocker — continue without it
-            aiResult = { confidence: 0, flags: ["AI_UNAVAILABLE"] } as any;
+            aiResult = { confidence: null, flags: ["AI_UNAVAILABLE"] } as any;
+            ruleFlags.push("AI_UNAVAILABLE");
         }
 
         // Decision
@@ -562,7 +574,7 @@ async function handleImage(
         await prisma.submission.update({
             where: { id: submission.id },
             data: {
-                mediaUrl: imagePath,
+                mediaUrl: driveFileId,
                 mediaHash: hash,
                 verificationStatus,
                 verificationPolicy: "PILOT_MRV",
@@ -600,6 +612,7 @@ async function handleImage(
             ]);
             await prisma.session.update({ where: { id: session.id }, data: { state: "COMPLETED", completedAt: new Date() } });
         }
+
     } catch (err) {
         console.error("Image processing error:", err);
         await sendWhatsAppMessage(phone, "❌ Something went wrong processing your image. Please try sending it again.");
@@ -870,10 +883,10 @@ function graphApiPost(data: Record<string, unknown>): Promise<void> {
     });
 }
 
-async function downloadWhatsAppMedia(mediaId: string, submissionId: string): Promise<string> {
+async function downloadWhatsAppMedia(mediaId: string, submissionId: string): Promise<Buffer> {
     if (!WHATSAPP_API_TOKEN) {
         console.log(`📥 [MOCK] Would download media ${mediaId}`);
-        return path.join(UPLOADS_DIR, `${submissionId}.jpg`);
+        return Buffer.from("mock image content");
     }
 
     // Step 1: Get media URL
@@ -901,8 +914,7 @@ async function downloadWhatsAppMedia(mediaId: string, submissionId: string): Pro
     });
 
     // Step 2: Download the actual file
-    const filePath = path.join(UPLOADS_DIR, `${submissionId}.jpg`);
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<Buffer>((resolve, reject) => {
         const url = new URL(mediaUrl);
         const options = {
             hostname: url.hostname,
@@ -911,18 +923,15 @@ async function downloadWhatsAppMedia(mediaId: string, submissionId: string): Pro
             headers: { Authorization: `Bearer ${WHATSAPP_API_TOKEN}` },
         };
         const req = https.request(options, (res) => {
-            const fileStream = fs.createWriteStream(filePath);
-            res.pipe(fileStream);
-            fileStream.on("finish", () => {
-                fileStream.close();
-                resolve();
+            const chunks: Buffer[] = [];
+            res.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            res.on("end", () => {
+                resolve(Buffer.concat(chunks));
             });
         });
         req.on("error", reject);
         req.end();
     });
-
-    return filePath;
 }
 
 export default router;

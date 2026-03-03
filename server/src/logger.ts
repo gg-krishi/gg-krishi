@@ -20,6 +20,7 @@ export type LogEvent =
     | "WRONG_MESSAGE_TYPE"
     | "IMAGE_RECEIVED"
     | "IMAGE_DUPLICATE"
+    | "DRIVE_UPLOAD_FAILED"
     // Verification
     | "AI_ANALYSIS_COMPLETE"
     | "AI_ANALYSIS_FAILED"

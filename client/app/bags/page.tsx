@@ -1,6 +1,23 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { motion } from "framer-motion";
+import { Package, Plus, QrCode, RefreshCcw } from "lucide-react";
+import { 
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { LoadingButton } from "@/components/ui/loading-button";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -11,21 +28,24 @@ interface Bag {
     status: string;
     createdAt: string;
     assignedUser?: { phone: string; name: string | null } | null;
-    _count?: { sessions: number; submissions: number };
 }
 
-const statusConfig: Record<string, { color: string; bg: string; label: string }> = {
-    unused: { color: "#22c55e", bg: "rgba(34,197,94,0.12)", label: "🟢 Unused" },
-    in_session: { color: "#eab308", bg: "rgba(234,179,8,0.12)", label: "⏳ In Session" },
-    used: { color: "#3b82f6", bg: "rgba(59,130,246,0.12)", label: "✅ Used" },
-    flagged: { color: "#ef4444", bg: "rgba(239,68,68,0.12)", label: "🚩 Flagged" },
+const statusConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline", label: string, className?: string }> = {
+    unused: { variant: "secondary", label: "Unused" },
+    in_session: { variant: "default", label: "In Session" },
+    used: { variant: "outline", label: "Used", className: "text-green-600 border-green-600" },
+    flagged: { variant: "destructive", label: "Flagged" },
 };
 
 export default function BagsPage() {
     const [bags, setBags] = useState<Bag[]>([]);
     const [loading, setLoading] = useState(true);
-    const [creating, setCreating] = useState(false);
-    const [qrModal, setQrModal] = useState<{ bagId: string; label: string; status: string; mode: string } | null>(null);
+    const [creatingPilot, setCreatingPilot] = useState(false);
+    const [creatingDemo, setCreatingDemo] = useState(false);
+    
+    // QR Modal State
+    const [qrModalOpen, setQrModalOpen] = useState(false);
+    const [qrData, setQrData] = useState<{ bagId: string; label: string; status: string; mode: string } | null>(null);
     const [qrSvg, setQrSvg] = useState("");
 
     const fetchBags = useCallback(async () => {
@@ -47,7 +67,9 @@ export default function BagsPage() {
     }, [fetchBags]);
 
     const createBag = async (mode: string = "PILOT") => {
-        setCreating(true);
+        if (mode === "PILOT") setCreatingPilot(true);
+        else setCreatingDemo(true);
+        
         try {
             const res = await fetch(`${API}/api/bags`, {
                 method: "POST",
@@ -60,7 +82,8 @@ export default function BagsPage() {
         } catch (err) {
             console.error("Failed to create bag:", err);
         } finally {
-            setCreating(false);
+            if (mode === "PILOT") setCreatingPilot(false);
+            else setCreatingDemo(false);
         }
     };
 
@@ -75,7 +98,10 @@ export default function BagsPage() {
 
     const showQr = async (bagId: string, label: string, status: string, batchId: string | null) => {
         const mode = batchId?.includes("DEMO") ? "DEMO" : "PILOT";
-        setQrModal({ bagId, label, status, mode });
+        setQrData({ bagId, label, status, mode });
+        setQrModalOpen(true);
+        setQrSvg(""); // reset while loading
+
         try {
             const res = await fetch(`${API}/api/bags/${bagId}/qr`);
             const svg = await res.text();
@@ -85,111 +111,176 @@ export default function BagsPage() {
         }
     };
 
-    const closeQr = () => { setQrModal(null); setQrSvg(""); };
-
     const formatDate = (dateStr: string) => {
         return new Date(dateStr).toLocaleDateString("en-IN", {
             day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
         });
     };
 
+    const unusedCount = bags.filter((b) => b.status === "unused").length;
+    const usedCount = bags.filter((b) => b.status === "used").length;
+
     return (
-        <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
-                <div>
-                    <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>Biochar Bags</h1>
-                    <p style={{ color: "var(--text-secondary)", margin: "6px 0 0", fontSize: 14 }}>
-                        {bags.length} total · {bags.filter((b) => b.status === "unused").length} unused · {bags.filter((b) => b.status === "used").length} used
-                    </p>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => createBag("PILOT")} disabled={creating}
-                        style={{ padding: "10px 16px", background: "linear-gradient(135deg, #22c55e, #16a34a)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: creating ? "wait" : "pointer", opacity: creating ? 0.7 : 1 }}>
-                        + Pilot Bag
-                    </button>
-                    <button onClick={() => createBag("DEMO")} disabled={creating}
-                        style={{ padding: "10px 16px", background: "linear-gradient(135deg, #a855f7, #7c3aed)", color: "#fff", border: "none", borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: creating ? "wait" : "pointer", opacity: creating ? 0.7 : 1 }}>
-                        + Demo Bag
-                    </button>
-                </div>
-            </div>
-
-            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                        <tr style={{ borderBottom: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Bag Label</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Batch</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Status</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Assigned To</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Created</th>
-                            <th style={{ textAlign: "center", padding: "12px 16px", fontWeight: 600 }}>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading ? (
-                            <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading...</td></tr>
-                        ) : bags.length === 0 ? (
-                            <tr><td colSpan={6} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No bags yet.</td></tr>
-                        ) : (
-                            bags.map((bag) => {
-                                const sc = statusConfig[bag.status] || statusConfig.unused;
-                                return (
-                                    <tr key={bag.bagId} style={{ borderBottom: "1px solid var(--border)" }}
-                                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-card-hover)")}
-                                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                                        <td style={{ padding: "12px 16px", fontFamily: "var(--font-geist-mono)", fontSize: 13, fontWeight: 500 }}>{bag.label}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-muted)" }}>{bag.batchId || "—"}</td>
-                                        <td style={{ padding: "12px 16px" }}>
-                                            <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 6, fontSize: 12, fontWeight: 600, color: sc.color, background: sc.bg }}>{sc.label}</span>
-                                        </td>
-                                        <td style={{ padding: "12px 16px", fontSize: 13, color: "var(--text-secondary)" }}>
-                                            {bag.assignedUser ? (bag.assignedUser.name || bag.assignedUser.phone) : "—"}
-                                        </td>
-                                        <td style={{ padding: "12px 16px", fontSize: 13, color: "var(--text-secondary)" }}>{formatDate(bag.createdAt)}</td>
-                                        <td style={{ padding: "12px 16px", textAlign: "center" }}>
-                                            <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-                                                <button onClick={() => showQr(bag.bagId, bag.label, bag.status, bag.batchId)}
-                                                    style={{ padding: "5px 10px", background: "var(--bg-primary)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
-                                                    QR
-                                                </button>
-                                                {(bag.status === "used" || bag.status === "flagged") && (
-                                                    <button onClick={() => resetBag(bag.bagId)}
-                                                        style={{ padding: "5px 10px", background: "rgba(234,179,8,0.12)", color: "#eab308", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 6, fontSize: 11, cursor: "pointer", fontWeight: 600 }}>
-                                                        Reset
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                );
-                            })
-                        )}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* QR Modal */}
-            {qrModal && (
-                <div onClick={closeQr} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, backdropFilter: "blur(4px)" }}>
-                    <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 16, padding: 32, width: 400, textAlign: "center", position: "relative" }}>
-                        <button onClick={closeQr} style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: "var(--text-muted)", fontSize: 20, cursor: "pointer" }}>✕</button>
-                        <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 600 }}>{qrModal.label}</h3>
-                        <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--text-muted)" }}>Scan with phone to open WhatsApp</p>
-
-                        <div style={{ background: "#fff", borderRadius: 12, padding: 20, display: "inline-block" }}>
-                            {qrSvg ? (
-                                <div dangerouslySetInnerHTML={{ __html: qrSvg }} style={{ width: 200, height: 200 }} />
-                            ) : (
-                                <div style={{ width: 200, height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "#999" }}>Loading...</div>
-                            )}
-                        </div>
-                        <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
-                            Mode: <strong>{qrModal.mode === "DEMO" ? "Investor Demo (auto-verify)" : "Pilot MRV (AI verification)"}</strong>
+        <div className="space-y-6 max-w-7xl mx-auto">
+            <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+            >
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-primary/10 rounded-full">
+                        <Package className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-3xl font-bold tracking-tight">Biochar Bags</h1>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                            {bags.length} total &middot; <span className="text-green-500 font-medium">{unusedCount} unused</span> &middot; {usedCount} used
                         </p>
                     </div>
                 </div>
-            )}
+                <div className="flex items-center gap-3">
+                    <LoadingButton 
+                        onClick={() => createBag("PILOT")} 
+                        isLoading={creatingPilot}
+                        disabled={creatingDemo}
+                        className="bg-green-600 hover:bg-green-700 text-white"
+                    >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Pilot Bag
+                    </LoadingButton>
+                    <LoadingButton 
+                        onClick={() => createBag("DEMO")} 
+                        isLoading={creatingDemo}
+                        disabled={creatingPilot}
+                        variant="secondary"
+                        className="bg-purple-600 hover:bg-purple-700 text-white"
+                    >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Demo Bag
+                    </LoadingButton>
+                </div>
+            </motion.div>
+
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+            >
+                <Card className="shadow-sm">
+                    <CardContent className="p-0 sm:p-6 overflow-x-auto">
+                        <Table className="min-w-[800px]">
+                        <TableHeader>
+                            <TableRow className="hover:bg-transparent">
+                                <TableHead className="font-medium">Bag Label</TableHead>
+                                <TableHead className="font-medium">Batch</TableHead>
+                                <TableHead className="font-medium">Status</TableHead>
+                                <TableHead className="font-medium">Assigned To</TableHead>
+                                <TableHead className="font-medium">Created</TableHead>
+                                <TableHead className="text-center font-medium">Actions</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {loading ? (
+                                Array.from({ length: 5 }).map((_, i) => (
+                                    <TableRow key={i} className="border-border/50">
+                                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-32" /></TableCell>
+                                        <TableCell><Skeleton className="h-6 w-20 rounded-full" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                                        <TableCell><Skeleton className="h-8 w-16 mx-auto rounded-md" /></TableCell>
+                                    </TableRow>
+                                ))
+                            ) : bags.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={6} className="h-32 text-center text-muted-foreground">
+                                        No bags yet.
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                bags.map((bag) => {
+                                    const sc = statusConfig[bag.status] || statusConfig.unused;
+                                    return (
+                                        <TableRow 
+                                            key={bag.bagId} 
+                                            className="border-border/50 transition-colors hover:bg-muted/30 group"
+                                        >
+                                            <TableCell className="font-mono text-sm font-medium">{bag.label}</TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">{bag.batchId || "—"}</TableCell>
+                                            <TableCell>
+                                                <Badge variant={sc.variant} className={sc.className}>
+                                                    {sc.label}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-sm">
+                                                {bag.assignedUser ? (bag.assignedUser.name || `+${bag.assignedUser.phone}`) : <span className="text-muted-foreground">—</span>}
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">
+                                                {formatDate(bag.createdAt)}
+                                            </TableCell>
+                                            <TableCell className="text-center">
+                                                <div className="flex gap-2 justify-center">
+                                                    <Button 
+                                                        variant="outline" 
+                                                        size="sm" 
+                                                        onClick={() => showQr(bag.bagId, bag.label, bag.status, bag.batchId)}
+                                                        className="h-8 text-xs font-medium"
+                                                    >
+                                                        <QrCode className="h-3.5 w-3.5 mr-1" /> QR
+                                                    </Button>
+                                                    {(bag.status === "used" || bag.status === "flagged") && (
+                                                        <Button 
+                                                            variant="secondary" 
+                                                            size="sm" 
+                                                            onClick={() => resetBag(bag.bagId)}
+                                                            className="h-8 text-xs font-medium text-yellow-600 dark:text-yellow-500 hover:text-yellow-700 dark:hover:text-yellow-400 bg-yellow-500/10 hover:bg-yellow-500/20"
+                                                        >
+                                                            <RefreshCcw className="h-3.5 w-3.5 mr-1" /> Reset
+                                                        </Button>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })
+                            )}
+                        </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+            </motion.div>
+
+            <Dialog open={qrModalOpen} onOpenChange={setQrModalOpen}>
+                <DialogContent className="sm:max-w-md text-center">
+                    <DialogHeader>
+                        <DialogTitle className="text-xl font-bold text-center">
+                            {qrData?.label}
+                        </DialogTitle>
+                        <DialogDescription className="text-center">
+                            Scan with phone to open WhatsApp
+                        </DialogDescription>
+                    </DialogHeader>
+                    
+                    <div className="flex justify-center items-center py-6">
+                        <div className="bg-white p-4 rounded-xl shadow-sm border">
+                            {qrSvg ? (
+                                <div dangerouslySetInnerHTML={{ __html: qrSvg }} className="w-48 h-48" />
+                            ) : (
+                                <div className="w-48 h-48 flex items-center justify-center">
+                                    <Skeleton className="w-full h-full rounded-lg" />
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="text-xs text-muted-foreground bg-muted p-3 border rounded-lg text-center">
+                        Mode: <span className="font-semibold text-foreground">
+                            {qrData?.mode === "DEMO" ? "Investor Demo (auto-verify)" : "Pilot MRV (AI verification)"}
+                        </span>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

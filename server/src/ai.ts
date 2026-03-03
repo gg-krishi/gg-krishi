@@ -44,12 +44,8 @@ Return ONLY a JSON object with this exact structure, no markdown or extra text:
 
 Be strict. If anything looks suspicious, lower the confidence score and add to flags.`;
 
-export async function analyzeImage(imagePath: string): Promise<AIVerificationResult> {
-    const imageBuffer = fs.readFileSync(imagePath);
-    const base64Image = imageBuffer.toString("base64");
-
-    const ext = path.extname(imagePath).toLowerCase();
-    const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
+export async function analyzeImage({ buffer, mimeType }: { buffer: Buffer; mimeType: string }): Promise<AIVerificationResult> {
+    const base64Image = buffer.toString("base64");
 
     try {
         const completion = await groq.chat.completions.create({

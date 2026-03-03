@@ -1,5 +1,4 @@
 import * as crypto from "crypto";
-import * as fs from "fs";
 import prisma from "./logger";
 import type { AIVerificationResult } from "./ai";
 
@@ -10,10 +9,9 @@ interface FraudResult {
 }
 
 /**
- * Compute SHA-256 hash of an image file
+ * Compute SHA-256 hash of an image Buffer
  */
-export function computeImageHash(imagePath: string): string {
-    const buffer = fs.readFileSync(imagePath);
+export function computeImageHash(buffer: Buffer): string {
     return crypto.createHash("sha256").update(buffer).digest("hex");
 }
 
@@ -21,9 +19,9 @@ export function computeImageHash(imagePath: string): string {
  * Check if this image hash already exists in the database
  */
 export async function checkDuplicateImage(hash: string, currentBagId: string): Promise<string | null> {
-    const existing = await prisma.verification.findFirst({
+    const existing = await prisma.submission.findFirst({
         where: {
-            imageSha256: hash,
+            mediaHash: hash,
             bagId: { not: currentBagId },
         },
     });

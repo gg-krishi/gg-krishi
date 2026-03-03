@@ -1,25 +1,84 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
 
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-card: #12121a;
-  --bg-card-hover: #1a1a28;
-  --bg-sidebar: #0d0d14;
-  --border: #1e1e2e;
-  --border-hover: #2a2a3e;
-  --text-primary: #f0f0f5;
-  --text-secondary: #8888a0;
-  --text-muted: #55556a;
-  --accent-green: #22c55e;
-  --accent-green-dim: rgba(34, 197, 94, 0.12);
-  --accent-yellow: #eab308;
-  --accent-yellow-dim: rgba(234, 179, 8, 0.12);
-  --accent-red: #ef4444;
-  --accent-red-dim: rgba(239, 68, 68, 0.12);
-  --accent-blue: #3b82f6;
-  --accent-blue-dim: rgba(59, 130, 246, 0.12);
-  --accent-purple: #a855f7;
-  --accent-purple-dim: rgba(168, 85, 247, 0.12);
+  --background: hsl(0, 0%, 100%);
+  --foreground: hsl(240, 10%, 10%);
+  --card: hsl(0, 0%, 100%);
+  --card-foreground: hsl(240, 10%, 10%);
+  --popover: hsl(0, 0%, 100%);
+  --popover-foreground: hsl(240, 10%, 10%);
+  --primary: hsl(238, 43%, 59%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(240, 10%, 96%);
+  --secondary-foreground: hsl(240, 10%, 20%);
+  --muted: hsl(240, 10%, 95%);
+  --muted-foreground: hsl(240, 5%, 45%);
+  --accent: hsl(238, 43%, 59%);
+  --accent-foreground: hsl(0, 0%, 100%);
+  --destructive: hsl(0, 84%, 60%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(240, 10%, 90%);
+  --input: hsl(240, 10%, 90%);
+  --ring: hsl(238, 43%, 59%);
+  --radius: 0.5rem;
+  
+  --chart-1: hsl(238, 43%, 59%);
+  --chart-2: hsl(238, 35%, 65%);
+  --chart-3: hsl(238, 28%, 70%);
+  --chart-4: hsl(238, 20%, 75%);
+  --chart-5: hsl(238, 15%, 82%);
+
+  /* Sidebar variables mapping */
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--muted-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+
+.dark {
+  --background: hsl(240, 10%, 6%);
+  --foreground: hsl(240, 10%, 95%);
+  --card: hsl(240, 10%, 8%);
+  --card-foreground: hsl(240, 10%, 95%);
+  --popover: hsl(240, 10%, 8%);
+  --popover-foreground: hsl(240, 10%, 95%);
+  --primary: hsl(238, 43%, 65%);
+  --primary-foreground: hsl(0, 0%, 100%);
+  --secondary: hsl(240, 10%, 15%);
+  --secondary-foreground: hsl(240, 10%, 90%);
+  --muted: hsl(240, 10%, 15%);
+  --muted-foreground: hsl(240, 5%, 55%);
+  --accent: hsl(238, 43%, 65%);
+  --accent-foreground: hsl(0, 0%, 100%);
+  --destructive: hsl(0, 72%, 51%);
+  --destructive-foreground: hsl(0, 0%, 100%);
+  --border: hsl(240, 10%, 18%);
+  --input: hsl(240, 10%, 18%);
+  --ring: hsl(238, 43%, 65%);
+
+  --chart-1: hsl(238, 43%, 65%);
+  --chart-2: hsl(238, 35%, 70%);
+  --chart-3: hsl(238, 28%, 75%);
+  --chart-4: hsl(238, 20%, 80%);
+  --chart-5: hsl(238, 15%, 85%);
+
+  /* Sidebar */
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--muted);
+  --sidebar-accent-foreground: var(--muted-foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
 }
 
 * {
@@ -27,15 +86,71 @@
 }
 
 body {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Poppins', system-ui, -apple-system, sans-serif;
   margin: 0;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Scrollbar */
+/* Custom scrollbar matching Breyus */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted-foreground) 30%, transparent); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--muted-foreground) 50%, transparent); }
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Breyus specific shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-DEFAULT: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

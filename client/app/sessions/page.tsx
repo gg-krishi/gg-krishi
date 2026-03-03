@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { motion } from "framer-motion";
+import { CalendarDays, Filter } from "lucide-react";
+import { 
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+} from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -18,15 +27,15 @@ interface Session {
     submission: { verificationStatus: string } | null;
 }
 
-const stateColors: Record<string, { color: string; bg: string }> = {
-    COMPLETED: { color: "#22c55e", bg: "rgba(34,197,94,0.12)" },
-    REWARD: { color: "#3b82f6", bg: "rgba(59,130,246,0.12)" },
-    PROCESSING: { color: "#eab308", bg: "rgba(234,179,8,0.12)" },
-    AWAITING_PHOTO: { color: "#f97316", bg: "rgba(249,115,22,0.12)" },
-    AWAITING_GPS: { color: "#a855f7", bg: "rgba(168,85,247,0.12)" },
-    LANGUAGE_SELECT: { color: "#06b6d4", bg: "rgba(6,182,212,0.12)" },
-    NAME_CONFIRM: { color: "#06b6d4", bg: "rgba(6,182,212,0.12)" },
-    GATE: { color: "#6b7280", bg: "rgba(107,114,128,0.12)" },
+const stateConfig: Record<string, { variant: "default" | "secondary" | "destructive" | "outline", className?: string }> = {
+    COMPLETED: { variant: "outline", className: "text-green-600 border-green-600" },
+    REWARD: { variant: "default", className: "bg-blue-600 hover:bg-blue-700 text-white" },
+    PROCESSING: { variant: "secondary" },
+    AWAITING_PHOTO: { variant: "secondary" },
+    AWAITING_GPS: { variant: "secondary" },
+    LANGUAGE_SELECT: { variant: "secondary" },
+    NAME_CONFIRM: { variant: "secondary" },
+    GATE: { variant: "secondary" },
 };
 
 export default function SessionsPage() {
@@ -40,86 +49,166 @@ export default function SessionsPage() {
             const res = await fetch(url);
             const data = await res.json();
             setSessions(Array.isArray(data) ? data : []);
-        } catch (err) { console.error("Failed to fetch sessions:", err); }
-        finally { setLoading(false); }
+        } catch (err) { 
+            console.error("Failed to fetch sessions:", err); 
+        } finally { 
+            setLoading(false); 
+        }
     }, [filter]);
 
-    useEffect(() => { fetchSessions(); const i = setInterval(fetchSessions, 5000); return () => clearInterval(i); }, [fetchSessions]);
+    useEffect(() => { 
+        fetchSessions(); 
+        const i = setInterval(fetchSessions, 5000); 
+        return () => clearInterval(i); 
+    }, [fetchSessions]);
 
-    const formatDate = (d: string) => new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+    const formatDate = (d: string) => new Date(d).toLocaleString("en-IN", { 
+        day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" 
+    });
 
     return (
-        <div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
-                <div>
-                    <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0 }}>Sessions</h1>
-                    <p style={{ color: "var(--text-secondary)", margin: "6px 0 0", fontSize: 14 }}>{sessions.length} total sessions</p>
+        <div className="space-y-6 max-w-7xl mx-auto">
+            <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+                className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
+            >
+                <div className="flex items-center gap-4">
+                    <div className="p-3 bg-primary/10 rounded-full">
+                        <CalendarDays className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                            {sessions.length} total sessions
+                        </p>
+                    </div>
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                    {["", "PILOT_MRV", "DEMO_AUTO"].map((f) => (
-                        <button key={f} onClick={() => setFilter(f)}
-                            style={{
-                                padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", fontSize: 12, fontWeight: 600, cursor: "pointer",
-                                background: filter === f ? "rgba(34,197,94,0.15)" : "transparent",
-                                color: filter === f ? "#22c55e" : "var(--text-muted)"
-                            }}>
-                            {f === "" ? "All" : f === "PILOT_MRV" ? "🌾 Pilot" : "🎭 Demo"}
-                        </button>
+                
+                <div className="flex items-center gap-2 bg-muted/50 p-1 rounded-lg border">
+                    <Filter className="h-4 w-4 ml-2 text-muted-foreground" />
+                    {[{ id: "", label: "All" }, { id: "PILOT_MRV", label: "🌾 Pilot" }, { id: "DEMO_AUTO", label: "🎭 Demo" }].map((f) => (
+                        <Button 
+                            key={f.id} 
+                            variant={filter === f.id ? "default" : "ghost"}
+                            size="sm"
+                            onClick={() => setFilter(f.id)}
+                            className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
+                                filter === f.id 
+                                    ? f.id === "PILOT_MRV" ? "bg-green-600 hover:bg-green-700" : f.id === "DEMO_AUTO" ? "bg-purple-600 hover:bg-purple-700" : ""
+                                    : ""
+                            }`}
+                        >
+                                <span>{f.label}</span>
+                        </Button>
                     ))}
                 </div>
-            </div>
+            </motion.div>
 
-            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, overflow: "hidden" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                        <tr style={{ borderBottom: "1px solid var(--border)", fontSize: 12, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>User</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Bag</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Policy</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>State</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Result</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Started</th>
-                            <th style={{ textAlign: "left", padding: "12px 16px", fontWeight: 600 }}>Flags</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading ? (
-                            <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>Loading...</td></tr>
-                        ) : sessions.length === 0 ? (
-                            <tr><td colSpan={7} style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>No sessions yet.</td></tr>
-                        ) : (
-                            sessions.map((s) => {
-                                const sc = stateColors[s.state] || { color: "#6b7280", bg: "rgba(107,114,128,0.12)" };
-                                return (
-                                    <tr key={s.id} style={{ borderBottom: "1px solid var(--border)" }}
-                                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-card-hover)")}
-                                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                                        <td style={{ padding: "12px 16px", fontSize: 13 }}>{s.user.name || s.user.phone}</td>
-                                        <td style={{ padding: "12px 16px", fontFamily: "var(--font-geist-mono)", fontSize: 12 }}>{s.bag.label}</td>
-                                        <td style={{ padding: "12px 16px" }}>
-                                            <span style={{
-                                                padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-                                                background: s.verificationPolicy === "DEMO_AUTO" ? "rgba(168,85,247,0.12)" : "rgba(34,197,94,0.12)",
-                                                color: s.verificationPolicy === "DEMO_AUTO" ? "#a855f7" : "#22c55e"
-                                            }}>
-                                                {s.verificationPolicy === "DEMO_AUTO" ? "🎭 Demo" : "🌾 Pilot"}
-                                            </span>
-                                        </td>
-                                        <td style={{ padding: "12px 16px" }}>
-                                            <span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600, color: sc.color, background: sc.bg }}>{s.state}</span>
-                                        </td>
-                                        <td style={{ padding: "12px 16px", fontSize: 12 }}>{s.submission?.verificationStatus || "—"}</td>
-                                        <td style={{ padding: "12px 16px", fontSize: 12, color: "var(--text-secondary)" }}>{formatDate(s.startedAt)}</td>
-                                        <td style={{ padding: "12px 16px" }}>
-                                            {s.timeoutFlag && <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 600, background: "rgba(239,68,68,0.12)", color: "#ef4444" }}>TIMEOUT</span>}
-                                        </td>
-                                    </tr>
-                                );
-                            })
-                        )}
-                    </tbody>
-                </table>
-            </div>
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+            >
+                <Card className="shadow-sm">
+                    <CardContent className="p-0 sm:p-6 overflow-x-auto">
+                        <Table className="min-w-[800px]">
+                        <TableHeader>
+                            <TableRow className="hover:bg-transparent">
+                                <TableHead className="font-medium">User</TableHead>
+                                <TableHead className="font-medium">Bag</TableHead>
+                                <TableHead className="font-medium">Policy</TableHead>
+                                <TableHead className="font-medium">State</TableHead>
+                                <TableHead className="font-medium">Result</TableHead>
+                                <TableHead className="font-medium">Started</TableHead>
+                                <TableHead className="text-right font-medium">Flags</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {loading ? (
+                                Array.from({ length: 5 }).map((_, i) => (
+                                    <TableRow key={i} className="border-border/50">
+                                        <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                                        <TableCell><Skeleton className="h-5 w-16" /></TableCell>
+                                        <TableCell><Skeleton className="h-5 w-24 rounded-full" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-20" /></TableCell>
+                                        <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                                        <TableCell><Skeleton className="h-5 w-16 ml-auto rounded-md" /></TableCell>
+                                    </TableRow>
+                                ))
+                            ) : sessions.length === 0 ? (
+                                <TableRow>
+                                    <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                                        No sessions found for the selected filter.
+                                    </TableCell>
+                                </TableRow>
+                            ) : (
+                                sessions.map((s) => {
+                                    const sc = stateConfig[s.state] || { variant: "secondary" };
+                                    return (
+                                        <TableRow 
+                                            key={s.id} 
+                                            className="border-border/50 transition-colors hover:bg-muted/30 group"
+                                        >
+                                            <TableCell className="font-medium">
+                                                {s.user.name || `+${s.user.phone}`}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-sm text-muted-foreground">
+                                                {s.bag.label}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge 
+                                                    variant="secondary" 
+                                                    className={`
+                                                        ${s.verificationPolicy === "DEMO_AUTO" 
+                                                            ? "bg-purple-500/10 text-purple-600 dark:text-purple-400 hover:bg-purple-500/20" 
+                                                            : "bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20"}
+                                                    `}
+                                                >
+                                                    {s.verificationPolicy === "DEMO_AUTO" ? "🎭 Demo" : "🌾 Pilot"}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                                <Badge 
+                                                    variant={sc.variant} 
+                                                    className={sc.className}
+                                                >
+                                                    {s.state}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="text-sm font-medium">
+                                                {s.submission?.verificationStatus ? (
+                                                    <span className={
+                                                        s.submission.verificationStatus === "APPROVED" ? "text-green-600 dark:text-green-400" :
+                                                        s.submission.verificationStatus === "REJECTED" ? "text-red-600 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"
+                                                    }>
+                                                        {s.submission.verificationStatus}
+                                                    </span>
+                                                ) : <span className="text-muted-foreground">—</span>}
+                                            </TableCell>
+                                            <TableCell className="text-muted-foreground text-sm">
+                                                {formatDate(s.startedAt)}
+                                            </TableCell>
+                                            <TableCell className="text-right">
+                                                {s.timeoutFlag ? (
+                                                    <Badge variant="destructive" className="bg-red-500/10 text-red-600 border-red-500/20 hover:bg-red-500/20">
+                                                        TIMEOUT
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-muted-foreground text-xs">—</span>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    );
+                                })
+                            )}
+                        </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+            </motion.div>
         </div>
     );
 }

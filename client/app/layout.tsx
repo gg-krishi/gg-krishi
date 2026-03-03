@@ -1,15 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Poppins } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import { ThemeProvider } from "@/components/theme-provider";
+import Topbar from "@/components/Topbar";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const poppins = Poppins({
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-poppins",
   subsets: ["latin"],
 });
 
@@ -24,14 +22,24 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <div style={{ display: "flex", minHeight: "100vh" }}>
-          <Sidebar />
-          <main style={{ flex: 1, padding: "32px", overflowY: "auto" }}>
-            {children}
-          </main>
-        </div>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${poppins.variable} font-sans antialiased text-foreground bg-background`}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <div className="flex min-h-screen w-full bg-background overflow-hidden relative">
+            <Sidebar />
+            <div className="flex flex-1 flex-col h-screen overflow-hidden">
+              <Topbar />
+              <main className="flex-1 overflow-y-auto p-6 md:p-8">
+                {children}
+              </main>
+            </div>
+          </div>
+        </ThemeProvider>
       </body>
     </html>
   );
