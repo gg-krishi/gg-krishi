@@ -1,0 +1,588 @@
+# GG Krishi — Digital MRV WhatsApp Bot Implementation Plan
+
+A WhatsApp-native **Digital MRV (Monitoring, Reporting, Verification)** infrastructure for decentralized biochar carbon credit verification, fraud detection, and farmer payout.
+
+---
+
+## System Overview
+
+```mermaid
+graph TD
+    A["👨‍🌾 Farmer (WhatsApp)"] -->|Messages / QR Scan| B["WhatsApp Business API<br/>(Gupshup / Twilio)"]
+    B -->|Webhook POST| C["Node.js Backend<br/>(Express)"]
+    C -->|Store| D["PostgreSQL Database"]
+    C -->|Upload| E["AWS S3<br/>(Image Storage)"]
+    C -->|Analyze| F["AI Vision Layer<br/>(OpenAI GPT-4o)"]
+    C -->|Score| G["Fraud Engine"]
+    C -->|Payout| H["UPI / Crypto<br/>(RazorpayX / Ethers.js)"]
+    C -->|Anchor Hash| I["Polygon Blockchain<br/>(Optional)"]
+    C -->|Serve| J["Operator Dashboard<br/>(React)"]
+    F -->|Confidence Score| G
+    G -->|Decision| D
+```
+
+---
+
+## Proposed Changes
+
+### 1. Project Scaffolding & Configuration
+
+#### [NEW] [package.json](file:///Users/john/Desktop/projects/biochar/package.json)
+Node.js project with Express, TypeScript, Prisma ORM, and all dependencies.
+
+**Core dependencies:**
+| Category | Packages |
+|---|---|
+| Server | `express`, `cors`, `helmet`, `dotenv` |
+| Database | `prisma`, `@prisma/client` |
+| WhatsApp | `twilio` or `@gupshup/messaging` |
+| AI | `openai` (GPT-4o Vision) |
+| Storage | `@aws-sdk/client-s3`, `multer` |
+| Crypto | `ethers` (Polygon anchoring) |
+| Hashing | `crypto` (SHA-256), `sharp`, `imghash` (pHash) |
+| Payments | `razorpay` (UPI via RazorpayX) |
+| Dashboard | `react`, `vite`, `recharts` |
+
+#### [NEW] [tsconfig.json](file:///Users/john/Desktop/projects/biochar/tsconfig.json)
+TypeScript strict mode configuration.
+
+#### [NEW] [.env.example](file:///Users/john/Desktop/projects/biochar/.env.example)
+Template for all required environment variables.
+
+---
+
+### 2. Database Schema (Prisma)
+
+#### [NEW] [prisma/schema.prisma](file:///Users/john/Desktop/projects/biochar/prisma/schema.prisma)
+
+Five core tables power the entire system:
+
+```prisma
+model Farmer {
+  id            String   @id @default(uuid())
+  phone         String   @unique
+  name          String
+  village       String
+  aadhaarLast4  String?
+  upiId         String?
+  walletAddress String?
+  farmLat       Float
+  farmLng       Float
+  farmRadius    Float    @default(500) // meters
+  status        String   @default("ACTIVE")
+  createdAt     DateTime @default(now())
+  
+  verifications Verification[]
+  payments      Payment[]
+}
+
+model Bag {
+  bagId             String   @id          // e.g. GG-P1-2026-02-B10291
+  batchId           String
+  plantId           String
+  productionDate    DateTime
+  weightKg          Float    @default(50)
+  status            String   @default("PRODUCED") 
+  // PRODUCED → DISTRIBUTED → CLAIMED → VERIFIED → PAID
+  claimedByFarmerId String?
+  claimedAt         DateTime?
+  
+  verifications     Verification[]
+}
+
+model Verification {
+  id              String   @id @default(uuid())
+  farmerId        String
+  bagId           String
+  gpsLat          Float
+  gpsLng          Float
+  gpsAccuracy     Float?
+  imageUrl        String
+  imageSha256     String   // tamper detection
+  imagePhash      String?  // perceptual hash for similarity
+  aiConfidence    Float?
+  aiResponse      Json?
+  fraudScore      Float?   @default(0)
+  fraudFlags      Json?    // array of triggered flags
+  status          String   @default("PENDING")
+  // PENDING → AI_REVIEW → VERIFIED → REJECTED → MANUAL_REVIEW
+  reviewedBy      String?
+  blockchainTxHash String? // optional Polygon anchor
+  submittedAt     DateTime @default(now())
+  verifiedAt      DateTime?
+  
+  farmer          Farmer   @relation(fields: [farmerId], references: [id])
+  bag             Bag      @relation(fields: [bagId], references: [bagId])
+  payment         Payment?
+}
+
+model Payment {
+  id               String   @id @default(uuid())
+  verificationId   String   @unique
+  farmerId         String
+  amount           Float
+  currency         String   @default("INR")
+  method           String   // "UPI" | "CRYPTO"
+  transactionRef   String?
+  status           String   @default("PENDING")
+  // PENDING → PROCESSING → COMPLETED → FAILED
+  paidAt           DateTime?
+  
+  verification     Verification @relation(fields: [verificationId], references: [id])
+  farmer           Farmer       @relation(fields: [farmerId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String
+  entityType String
+  entityId  String
+  payload   Json
+  ipAddress String?
+  timestamp DateTime @default(now())
+}
+```
+
+---
+
+### 3. WhatsApp Business API Layer
+
+#### [NEW] [src/whatsapp/webhook.ts](file:///Users/john/Desktop/projects/biochar/src/whatsapp/webhook.ts)
+
+Handles incoming WhatsApp messages via POST webhook:
+
+```
+POST /api/whatsapp/webhook
+```
+
+**Message routing logic:**
+
+| Message Pattern | Action |
+|---|---|
+| `"hi"` / `"start"` / first contact | → Onboarding flow |
+| `GG-*` (bag ID pattern) | → Bag linking flow |
+| Location message | → GPS capture for verification |
+| Image message | → Image verification flow |
+| `"status"` / `"reward"` | → Check verification / payment status |
+
+#### [NEW] [src/whatsapp/sender.ts](file:///Users/john/Desktop/projects/biochar/src/whatsapp/sender.ts)
+
+Sends templated replies, buttons, and interactive messages back to farmers.
+
+#### [NEW] [src/whatsapp/flows.ts](file:///Users/john/Desktop/projects/biochar/src/whatsapp/flows.ts)
+
+WhatsApp Flows (mini-app UI) for structured data collection during onboarding.
+
+---
+
+### 4. Farmer Onboarding Flow
+
+#### [NEW] [src/flows/onboarding.ts](file:///Users/john/Desktop/projects/biochar/src/flows/onboarding.ts)
+
+**One-time registration flow:**
+1. Farmer sends first message → bot replies: *"Welcome to GG Krishi. Let's register your farm."*
+2. Collect: **Name**, **Village**, **Aadhaar last 4** (optional), **UPI ID**
+3. Prompt: *"Share your current location while standing in your field."*
+4. Store GPS as farm center + default 500m radius
+5. Reply: *"Registration complete! Scan your first biochar bag QR to begin."*
+
+**Linkage created:** `Phone → Farmer Identity → Farm GPS Boundary`
+
+---
+
+### 5. QR Bag Linking System
+
+#### [NEW] [src/flows/bagLinking.ts](file:///Users/john/Desktop/projects/biochar/src/flows/bagLinking.ts)
+
+Each physical biochar bag has a QR code that opens:
+```
+https://wa.me/91XXXXXXXXXX?text=GG-P1-2026-02-B10291
+```
+
+**Flow:**
+1. Farmer scans QR → WhatsApp opens with pre-filled bag ID
+2. Backend validates: bag exists, bag not already claimed
+3. Mark: `bag.status = "CLAIMED"`, `bag.claimedByFarmerId = farmer.id`
+4. Reply: *"Bag #10291 linked! Now share your location and take a photo to verify application."*
+
+**Anti-duplicate:** Bag ID can only be claimed once. Second scan → `"This bag has already been claimed."`
+
+---
+
+### 6. GPS + Camera Verification Endpoint
+
+#### [NEW] [src/flows/verification.ts](file:///Users/john/Desktop/projects/biochar/src/flows/verification.ts)
+#### [NEW] [src/camera/index.html](file:///Users/john/Desktop/projects/biochar/src/camera/index.html)
+
+**Two-step verification:**
+
+**Step A — Location capture:**
+- Farmer shares WhatsApp live location
+- Backend checks: is GPS within registered farm boundary?
+- Uses Haversine formula: `distance(farmerGPS, farmCenter) <= farmRadius`
+- If outside → reject: *"Location doesn't match your registered farm."*
+
+**Step B — Camera capture (In-App Browser):**
+- Bot sends link: `https://verify.ggkrishi.com/capture?farmerId=X&bagId=Y`
+- WebView captures:
+  - Camera image (direct capture, no gallery)
+  - Browser GPS at capture time
+  - Timestamp
+  - Device user-agent
+- Uploads to backend → stored in S3
+- SHA-256 hash computed and stored
+
+> [!IMPORTANT]
+> Normal WhatsApp photos **strip EXIF metadata**. The in-app browser WebView approach preserves GPS + timestamp at capture time — this is critical for audit integrity.
+
+---
+
+### 7. AI Verification Layer
+
+#### [NEW] [src/ai/visionVerifier.ts](file:///Users/john/Desktop/projects/biochar/src/ai/visionVerifier.ts)
+
+Uses **OpenAI GPT-4o Vision API** to analyze submitted field photos.
+
+**AI checks (structured JSON output):**
+
+```json
+{
+  "biochar_visible": true,
+  "gg_bag_visible": true,
+  "soil_visible": true,
+  "outdoor_environment": true,
+  "human_present": false,
+  "screen_capture_detected": false,
+  "confidence": 0.96,
+  "flags": []
+}
+```
+
+**Decision logic:**
+
+| Confidence | Action |
+|---|---|
+| ≥ 0.95 | Auto-approve → `VERIFIED` |
+| 0.70–0.94 | → `MANUAL_REVIEW` queue |
+| < 0.70 | Auto-reject → `REJECTED` |
+
+#### [NEW] [src/ai/prompts.ts](file:///Users/john/Desktop/projects/biochar/src/ai/prompts.ts)
+
+System prompt for Vision API:
+
+```
+You are a carbon credit verification auditor. Analyze this field photo 
+and determine if biochar has been applied to agricultural soil.
+
+Check for:
+1. Is black charcoal-like material (biochar) visible on soil?
+2. Is a GG-branded bag visible in the frame?
+3. Is this an outdoor agricultural environment?
+4. Is this a real 3D scene (NOT a photo of a screen)?
+5. Are there signs of recent soil application/tilling?
+
+Return structured JSON with confidence score 0.0-1.0.
+```
+
+---
+
+### 8. Fraud Detection Engine
+
+#### [NEW] [src/fraud/engine.ts](file:///Users/john/Desktop/projects/biochar/src/fraud/engine.ts)
+#### [NEW] [src/fraud/scoring.ts](file:///Users/john/Desktop/projects/biochar/src/fraud/scoring.ts)
+
+**Five fraud vectors with layered mitigation:**
+
+---
+
+#### 🔴 Risk 1: GPS Spoofing
+
+**What it is:** Farmer uses mock-location apps to fake GPS coordinates, claiming biochar was applied at registered farm while actually being elsewhere.
+
+**Why it happens:** Android allows developer-mode mock GPS. Attackers want carbon credit rewards without real application.
+
+**How it's exploited:**
+1. Install GPS spoofing app (e.g., Fake GPS)
+2. Set coordinates to registered farm boundary
+3. Submit photo of biochar on *any* soil
+4. Pass GPS boundary check fraudulently
+
+**Mitigation (Layered):**
+
+| Layer | Technique | Implementation |
+|---|---|---|
+| **L1** | WhatsApp native location | Use `location` message type — harder to spoof than API |
+| **L2** | GPS accuracy radius check | Reject if `accuracy > 100m` (spoofed GPS often has low accuracy) |
+| **L3** | Cross-validate browser GPS vs WhatsApp GPS | WebView captures independent GPS — compare both |
+| **L4** | IP geolocation check | Compare IP-derived region vs claimed GPS region |
+| **L5** | AI sunlight analysis | AI estimates time-of-day from shadows vs submitted timestamp |
+| **L6** | Historical pattern detection | Flag if farmer submits from identical pixel-perfect GPS each time |
+
+**Fraud score contribution:** Each failed check adds +0.15 to fraud score.
+
+---
+
+#### 🔴 Risk 2: Photo Reuse
+
+**What it is:** Farmer resubmits the same photo (or slightly cropped version) for multiple bag verifications.
+
+**Why it happens:** Easy shortcut — one real application photo used to claim rewards for many bags.
+
+**How it's exploited:**
+1. Take one legitimate photo
+2. Submit same image for multiple bag IDs
+3. Slightly crop/rotate to bypass naive duplicate detection
+
+**Mitigation (Layered):**
+
+| Layer | Technique | Implementation |
+|---|---|---|
+| **L1** | SHA-256 exact hash | Reject if identical binary hash exists in DB |
+| **L2** | Perceptual hash (pHash) | Use `imghash` library — detects visual similarity even after crop/resize. Hamming distance < 5 = duplicate |
+| **L3** | AI embedding similarity | Generate image embedding via OpenAI — cosine similarity > 0.95 = flag |
+| **L4** | Timestamp validation | Reject if two verifications from same farmer within < 30 minutes |
+| **L5** | Force live capture | WebView camera — `capture="camera"` attribute blocks gallery selection |
+
+**Fraud score contribution:** Exact hash match = instant reject. pHash match adds +0.40.
+
+---
+
+#### 🔴 Risk 3: Photo-of-Photo (Screen Capture Fraud)
+
+**What it is:** Farmer photographs another device's screen showing a legitimate verification image.
+
+**Why it happens:** Bypasses GPS check — attacker can be anywhere while displaying a valid photo on screen.
+
+**How it's exploited:**
+1. Get a valid verification photo (from another farmer or screen capture)
+2. Display on phone/tablet screen
+3. Photograph the screen with verification device
+4. Submit as new evidence
+
+**Mitigation (Layered):**
+
+| Layer | Technique | Implementation |
+|---|---|---|
+| **L1** | AI moiré pattern detection | GPT-4o Vision detects screen pixel grid interference patterns |
+| **L2** | AI reflection detection | Detect screen glare / reflections in image |
+| **L3** | AI depth analysis | Real outdoor scenes have depth variation; screens are flat |
+| **L4** | Require 3-second video | Instead of static photo — much harder to fake screen capture |
+| **L5** | EXIF consistency | WebView-captured images have device camera EXIF; re-photos don't match |
+
+**Fraud score contribution:** Moiré detected = +0.50. Flat scene + no depth cues = +0.30.
+
+---
+
+#### 🔴 Risk 4: Duplicate Bag Claims
+
+**What it is:** Same bag QR code scanned and claimed multiple times — either by same farmer or shared with others.
+
+**Why it happens:** QR images can be screenshot/shared via WhatsApp groups.
+
+**How it's exploited:**
+1. Farmer scans bag QR
+2. Screenshots QR code
+3. Shares with other farmers or claims again from different device
+4. Multiple rewards for single bag
+
+**Mitigation (Layered):**
+
+| Layer | Technique | Implementation |
+|---|---|---|
+| **L1** | One-time claim lock | `bag.status` transitions: `PRODUCED → CLAIMED → VERIFIED → PAID`. Once `CLAIMED`, no second claim accepted |
+| **L2** | Farmer binding | `bag.claimedByFarmerId` set on first scan — permanent |
+| **L3** | Time window | Require verification within 4 hours of claim — prevents stockpiling QR codes |
+| **L4** | Rate limiting | Max 10 bags per farmer per day — prevents industrial-scale fraud |
+
+**Fraud score contribution:** Re-claim attempt = instant reject + farmer flagged.
+
+---
+
+#### 🔴 Risk 5: Clipboard Wallet Spoofing (Crypto Payouts)
+
+**What it is:** Malware on farmer's device silently replaces copied wallet address with attacker's address.
+
+**Why it happens:** Clipboard is accessible to any app. Crypto addresses are long and hard to verify visually.
+
+**How it's exploited:**
+1. Malware monitors clipboard for `0x` patterns
+2. Replaces with attacker's similar-looking address
+3. Farmer pastes into registration
+4. All future payouts go to attacker
+
+**Mitigation (Layered):**
+
+| Layer | Technique | Implementation |
+|---|---|---|
+| **L1** | Pre-registered wallet | Wallet address saved during onboarding — never re-entered |
+| **L2** | Address confirmation UI | Display full address with first 6 + last 6 highlighted — force manual confirmation |
+| **L3** | QR-based registration | Farmer scans their own wallet QR — bypasses clipboard entirely |
+| **L4** | Default to UPI | Prefer UPI for Indian farmers — clipboard attack irrelevant for UPI IDs |
+| **L5** | Checksum validation | Validate ETH address checksum (EIP-55) before storing |
+
+**Fraud score contribution:** Address mismatch on re-entry = account frozen pending review.
+
+---
+
+#### Composite Fraud Score
+
+```typescript
+fraudScore = 
+  gpsRisk       * 0.25 +
+  imageRisk     * 0.30 +
+  timestampRisk * 0.15 +
+  deviceRisk    * 0.10 +
+  historyRisk   * 0.20;
+
+// Decision:
+// fraudScore < 0.20 → AUTO_APPROVE
+// fraudScore 0.20–0.50 → MANUAL_REVIEW
+// fraudScore > 0.50 → AUTO_REJECT
+```
+
+---
+
+### 9. UPI / Crypto Payout Layer
+
+#### [NEW] [src/payments/upi.ts](file:///Users/john/Desktop/projects/biochar/src/payments/upi.ts)
+
+**UPI Payouts (Primary — India):**
+- Integration: **RazorpayX** Payouts API
+- Trigger: After `verification.status = "VERIFIED"`
+- Bot message: *"Verification successful! ₹100 reward sent to your UPI."*
+- Track: `payment.status = PENDING → PROCESSING → COMPLETED`
+
+#### [NEW] [src/payments/crypto.ts](file:///Users/john/Desktop/projects/biochar/src/payments/crypto.ts)
+
+**Crypto Payouts (Future / International):**
+- Use `ethers.js` to send USDT on Polygon
+- Pre-registered wallet only
+- Confirmation display before send
+- Gas paid by system wallet
+
+---
+
+### 10. Blockchain Hash Anchoring (Optional — Phase 3)
+
+#### [NEW] [src/blockchain/anchor.ts](file:///Users/john/Desktop/projects/biochar/src/blockchain/anchor.ts)
+
+**Purpose:** Prove audit logs haven't been tampered with after storage.
+
+**How it works:**
+1. Daily batch: collect all verification records from past 24h
+2. Compute Merkle root hash of all records
+3. Write hash to Polygon smart contract
+4. Store `txHash` in each verification record
+
+**Smart contract (Solidity):**
+```solidity
+contract AuditAnchor {
+    mapping(uint256 => bytes32) public dailyHashes;
+    
+    event HashAnchored(uint256 indexed day, bytes32 hash);
+    
+    function anchor(uint256 day, bytes32 hash) external onlyOwner {
+        require(dailyHashes[day] == 0, "Already anchored");
+        dailyHashes[day] = hash;
+        emit HashAnchored(day, hash);
+    }
+}
+```
+
+**Cost:** ~$0.01 per daily anchor on Polygon.
+
+> [!NOTE]
+> Blockchain does **NOT** prevent fraud. It only proves data wasn't altered after recording. All fraud prevention happens off-chain in the AI + Fraud Engine layers.
+
+---
+
+### 11. Operator Dashboard (React + Vite)
+
+#### [NEW] [dashboard/](file:///Users/john/Desktop/projects/biochar/dashboard/)
+
+A React web app for plant operators and auditors:
+
+| Page | Features |
+|---|---|
+| **Overview** | Total bags produced / claimed / verified / paid, daily stats |
+| **Verifications** | List with filters (status, fraud score, date), image preview |
+| **Manual Review** | Queue of flagged verifications, approve/reject buttons |
+| **Farmers** | Registered farmers, location map, activity history |
+| **Bags** | Lifecycle tracker: Produced → Distributed → Claimed → Verified → Paid |
+| **Audit Export** | CSV/PDF export for carbon registry submission |
+| **Blockchain Proofs** | View anchored hashes, verify against Polygon |
+
+---
+
+### 12. Project File Structure
+
+```
+biochar/
+├── prisma/
+│   └── schema.prisma
+├── src/
+│   ├── index.ts                 # Express server entry
+│   ├── config.ts                # Environment config
+│   ├── whatsapp/
+│   │   ├── webhook.ts           # Incoming message handler
+│   │   ├── sender.ts            # Outbound message helper
+│   │   └── flows.ts             # WhatsApp Flows definitions
+│   ├── flows/
+│   │   ├── onboarding.ts        # Farmer registration
+│   │   ├── bagLinking.ts        # QR scan → bag claim
+│   │   └── verification.ts      # GPS + image verification
+│   ├── ai/
+│   │   ├── visionVerifier.ts    # OpenAI Vision API calls
+│   │   └── prompts.ts           # System prompts
+│   ├── fraud/
+│   │   ├── engine.ts            # Fraud scoring pipeline
+│   │   ├── scoring.ts           # Composite score calculator
+│   │   ├── gpsValidator.ts      # GPS boundary + anomaly checks
+│   │   └── imageHasher.ts       # SHA-256 + perceptual hashing
+│   ├── payments/
+│   │   ├── upi.ts               # RazorpayX UPI payouts
+│   │   └── crypto.ts            # Polygon USDT payouts
+│   ├── blockchain/
+│   │   └── anchor.ts            # Daily Merkle hash anchoring
+│   ├── camera/
+│   │   └── index.html           # WebView camera capture page
+│   └── utils/
+│       ├── haversine.ts         # GPS distance calc
+│       └── logger.ts            # Structured logging
+├── dashboard/                    # React + Vite operator UI
+│   ├── src/
+│   ├── index.html
+│   └── package.json
+├── contracts/                    # Solidity (optional)
+│   └── AuditAnchor.sol
+├── .env.example
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+Run all tests with:
+```bash
+cd /Users/john/Desktop/projects/biochar && npm test
+```
+
+| Test File | What It Covers |
+|---|---|
+| `src/fraud/__tests__/scoring.test.ts` | Composite fraud score calculation with various risk combinations |
+| `src/fraud/__tests__/imageHasher.test.ts` | SHA-256 and pHash duplicate detection |
+| `src/fraud/__tests__/gpsValidator.test.ts` | Haversine boundary check, accuracy rejection |
+| `src/ai/__tests__/visionVerifier.test.ts` | AI response parsing, confidence threshold logic |
+| `src/flows/__tests__/bagLinking.test.ts` | Bag claim lifecycle, duplicate rejection |
+| `src/flows/__tests__/verification.test.ts` | End-to-end verification flow logic |
+
+### Manual Verification
+
+1. **WhatsApp Flow Test:** Send messages to the WhatsApp Business number and verify the full flow: onboarding → bag scan → location → photo → AI check → payout notification
+2. **Fraud Simulation:** Submit a second scan of an already-claimed bag → expect rejection message
+3. **Dashboard Review:** Open operator dashboard and verify verification records appear with correct status, fraud score, and image preview

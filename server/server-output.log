@@ -1,0 +1,13 @@
+
+> gg-krishi-server@1.0.0 dev
+> tsx watch src/index.ts
+
+
+🚀 GG Krishi Server running on http://localhost:3001
+📡 WhatsApp webhook: http://localhost:3001/api/whatsapp/webhook
+📊 Bags API: http://localhost:3001/api/bags
+👥 Users API: http://localhost:3001/api/users
+📋 Sessions API: http://localhost:3001/api/sessions
+📄 Submissions API: http://localhost:3001/api/submissions
+📜 Logs API: http://localhost:3001/api/logs
+

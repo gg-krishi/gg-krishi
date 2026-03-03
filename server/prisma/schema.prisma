@@ -1,0 +1,90 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String       @id @default(uuid())
+  phone       String       @unique
+  name        String?
+  language    String       @default("en") // en | hi
+  createdAt   DateTime     @default(now())
+  bags        Bag[]
+  sessions    Session[]
+  submissions Submission[]
+}
+
+model Bag {
+  bagId          String       @id @default(uuid())
+  label          String       @unique // e.g. GG-P1-2026-03-B00042
+  batchId        String?      // e.g. BATCH-2026-03-A
+  status         String       @default("unused") // unused | in_session | used | flagged
+  assignedUserId String?
+  assignedUser   User?        @relation(fields: [assignedUserId], references: [id])
+  createdAt      DateTime     @default(now())
+  sessions       Session[]
+  submissions    Submission[]
+  logs           ActivityLog[]
+}
+
+model Session {
+  id                 String      @id @default(uuid())
+  userId             String
+  bagId              String
+  verificationPolicy String      // PILOT_MRV | DEMO_AUTO
+  state              String      @default("LANGUAGE_SELECT")
+  // States: GATE | LANGUAGE_SELECT | NAME_CONFIRM | AWAITING_GPS | AWAITING_PHOTO | PROCESSING | REWARD | COMPLETED
+  language           String?
+  userName           String?
+  startedAt          DateTime    @default(now())
+  completedAt        DateTime?
+  timeoutFlag        Boolean     @default(false)
+  user               User        @relation(fields: [userId], references: [id])
+  bag                Bag         @relation(fields: [bagId], references: [bagId])
+  submission         Submission?
+  logs               ActivityLog[]
+}
+
+model Submission {
+  id                 String   @id @default(uuid())
+  sessionId          String   @unique
+  userId             String
+  bagId              String
+  latitude           Float?
+  longitude          Float?
+  locationTimestamp   DateTime?
+  mediaUrl           String?
+  mediaHash          String?
+  verificationStatus String   @default("PENDING") // PENDING | VERIFIED | REJECTED | PENDING_REVIEW
+  verificationPolicy String   // PILOT_MRV | DEMO_AUTO
+  reviewFlag         Boolean  @default(false)
+  aiConfidence       Float?
+  aiResponse         String?  // JSON string from Gemini
+  fraudScore         Float?
+  fraudFlags         String?  // JSON array of triggered flags
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  session            Session  @relation(fields: [sessionId], references: [id])
+  user               User     @relation(fields: [userId], references: [id])
+  bag                Bag      @relation(fields: [bagId], references: [bagId])
+  logs               ActivityLog[]
+}
+
+model ActivityLog {
+  id           String      @id @default(uuid())
+  event        String
+  bagId        String?
+  sessionId    String?
+  submissionId String?
+  phone        String?
+  details      String?     // JSON string with full context
+  level        String      @default("INFO") // INFO | WARN | ERROR
+  timestamp    DateTime    @default(now())
+  bag          Bag?        @relation(fields: [bagId], references: [bagId])
+  session      Session?    @relation(fields: [sessionId], references: [id])
+  submission   Submission? @relation(fields: [submissionId], references: [id])
+}

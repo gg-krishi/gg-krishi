@@ -1,0 +1,928 @@
+import { Request, Response, Router } from "express";
+import * as fs from "fs";
+import * as path from "path";
+import * as https from "https";
+import prisma, { logActivity } from "./logger";
+import { analyzeImage } from "./ai";
+import { computeImageHash, checkDuplicateImage } from "./fraud";
+
+const router = Router();
+
+const WHATSAPP_API_TOKEN = process.env.WHATSAPP_API_TOKEN || "";
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "";
+
+const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+
+// Ensure uploads directory exists
+const UPLOADS_DIR = path.join(__dirname, "..", "uploads");
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+// ─── Webhook Verification (GET) ─────────────────────────────────────
+router.get("/", (req: Request, res: Response) => {
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+
+    if (mode === "subscribe" && token === WHATSAPP_VERIFY_TOKEN) {
+        console.log("✅ Webhook verified");
+        res.status(200).send(challenge);
+    } else {
+        console.log("❌ Webhook verification failed");
+        res.sendStatus(403);
+    }
+});
+
+// ─── Incoming Messages (POST) ────────────────────────────────────────
+router.post("/", async (req: Request, res: Response) => {
+    res.sendStatus(200); // Always respond 200 immediately
+
+    try {
+        const body = req.body;
+        const entry = body?.entry?.[0];
+        const changes = entry?.changes?.[0];
+        const value = changes?.value;
+        const message = value?.messages?.[0];
+
+        if (!message) return; // Status update, not a message
+
+        const from = message.from as string;
+        const msgType = message.type as string;
+        const profileName = value?.contacts?.[0]?.profile?.name || null;
+
+        // Get or create user
+        const user = await getOrCreateUser(from, profileName);
+
+        // Check for active session
+        let session = await getActiveSession(from);
+
+        // Handle interactive button replies
+        if (msgType === "interactive") {
+            const interactive = message.interactive;
+            const buttonId = interactive?.button_reply?.id || interactive?.list_reply?.id || "";
+            await handleButtonReply(from, user, session, buttonId);
+            return;
+        }
+
+        // Handle text messages
+        if (msgType === "text") {
+            const text = (message.text?.body as string || "").trim();
+            await handleTextMessage(from, user, session, text);
+            return;
+        }
+
+        // Handle location
+        if (msgType === "location") {
+            const lat = message.location?.latitude as number;
+            const lng = message.location?.longitude as number;
+            await handleLocation(from, user, session, lat, lng);
+            return;
+        }
+
+        // Handle image
+        if (msgType === "image") {
+            const mediaId = message.image?.id as string;
+            await handleImage(from, user, session, mediaId);
+            return;
+        }
+
+        // Unknown message type → show gate
+        if (!session) {
+            await sendGateScreen(from);
+        }
+    } catch (err) {
+        console.error("Webhook processing error:", err);
+    }
+});
+
+// ─── Button Reply Handler ────────────────────────────────────────────
+
+async function handleButtonReply(
+    phone: string,
+    user: { id: string; phone: string; name: string | null; language: string },
+    session: SessionData | null,
+    buttonId: string
+): Promise<void> {
+    // Gate screen buttons
+    if (buttonId === "btn_scan_qr") {
+        await sendWhatsAppMessage(phone, "📱 Please scan the QR code printed on your GG biochar bag.\n\nThe QR will automatically open this chat with the bag registered.");
+        return;
+    }
+    if (buttonId === "btn_enter_bag_id") {
+        // Set a flag so next text message is treated as bag ID input
+        await prisma.activityLog.create({
+            data: { event: "BAG_ID_INPUT_REQUESTED", phone, level: "INFO" },
+        });
+        await sendWhatsAppMessage(phone, "📝 Type your Bag ID below.\n\nExample: GG-P1-2026-03-B00001");
+        return;
+    }
+    if (buttonId === "btn_need_help") {
+        await logActivity({ event: "HELP_REQUESTED", phone, details: { context: "gate_screen" } });
+        await sendWhatsAppMessage(phone, "📞 Your help request has been logged. Our team will contact you shortly.\n\nIn the meantime, you can scan your bag QR to get started.");
+        await sendGateScreen(phone);
+        return;
+    }
+    if (buttonId === "btn_explore_more") {
+        await logActivity({ event: "EXPLORE_MORE", phone, details: { context: "gate_screen" } });
+        await sendInteractiveList(phone,
+            "🌱 GG Krishi — Coming Soon",
+            "Explore upcoming features:",
+            "Features",
+            [
+                { id: "feat_geo", title: "📍 Geo-boundary Validation" },
+                { id: "feat_carbon", title: "🌍 Carbon Math Engine" },
+                { id: "feat_wallet", title: "💰 UPI Wallet Integration" },
+                { id: "feat_registry", title: "📋 Registry Export" },
+            ]
+        );
+        return;
+    }
+
+    // Feature list selections → coming soon
+    if (buttonId.startsWith("feat_")) {
+        await sendWhatsAppMessage(phone, "🚧 Coming soon! Stay tuned.\n\nScan your bag QR to start verification.");
+        await sendGateScreen(phone);
+        return;
+    }
+
+    // ── Session flow buttons ──
+
+    if (!session) {
+        await sendGateScreen(phone);
+        return;
+    }
+
+    // Language selection
+    if (buttonId === "lang_en" || buttonId === "lang_hi") {
+        if (session.state !== "LANGUAGE_SELECT") return;
+        const lang = buttonId === "lang_en" ? "en" : "hi";
+        await prisma.session.update({ where: { id: session.id }, data: { language: lang, state: "NAME_CONFIRM" } });
+        await prisma.user.update({ where: { id: user.id }, data: { language: lang } });
+        await logActivity({ event: "LANGUAGE_SELECTED", sessionId: session.id, bagId: session.bagId, phone, details: { language: lang } });
+
+        // Ask name confirmation
+        const displayName = user.name || "Farmer";
+        const msg = lang === "en"
+            ? `Is your name *${displayName}*?`
+            : `क्या आपका नाम *${displayName}* है?`;
+        await sendInteractiveButtons(phone, msg, [
+            { id: "name_yes", title: lang === "en" ? "✅ Yes" : "✅ हाँ" },
+            { id: "name_edit", title: lang === "en" ? "✏️ Edit" : "✏️ बदलें" },
+        ]);
+        return;
+    }
+
+    // Name confirmation
+    if (buttonId === "name_yes") {
+        if (session.state !== "NAME_CONFIRM") return;
+        const name = user.name || "Farmer";
+        await prisma.session.update({ where: { id: session.id }, data: { userName: name, state: "AWAITING_GPS" } });
+        await logActivity({ event: "NAME_CONFIRMED", sessionId: session.id, phone, details: { name, edited: false } });
+        await sendLocationRequest(phone, session.language || "en");
+        return;
+    }
+    if (buttonId === "name_edit") {
+        if (session.state !== "NAME_CONFIRM") return;
+        const msg = (session.language || "en") === "en"
+            ? "📝 Please type your name:"
+            : "📝 कृपया अपना नाम लिखें:";
+        await sendWhatsAppMessage(phone, msg);
+        // State remains NAME_CONFIRM, but next text input = name edit
+        return;
+    }
+
+    // Photo capture
+    if (buttonId === "btn_open_camera") {
+        if (session.state !== "AWAITING_PHOTO") return;
+        const msg = (session.language || "en") === "en"
+            ? "📸 Take a photo now and send it here.\n\nCapture biochar applied on soil. Include soil in frame."
+            : "📸 अभी फोटो लें और यहाँ भेजें।\n\nमिट्टी पर लगाए गए बायोचार की फोटो लें।";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+    if (buttonId === "btn_photo_help") {
+        if (session.state !== "AWAITING_PHOTO") return;
+        await logActivity({ event: "HELP_REQUESTED", sessionId: session.id, phone, details: { context: "photo_capture" } });
+        const msg = (session.language || "en") === "en"
+            ? "📷 Tips for a good photo:\n\n1. Stand in your field\n2. Point camera at soil where biochar is applied\n3. Make sure biochar (black material) is clearly visible\n4. Take photo in natural daylight\n5. Send directly from camera, not gallery"
+            : "📷 अच्छी फोटो के लिए सुझाव:\n\n1. अपने खेत में खड़े हों\n2. जहाँ बायोचार लगाया है वहाँ कैमरा करें\n3. बायोचार (काला पदार्थ) साफ दिखना चाहिए\n4. दिन की रोशनी में फोटो लें\n5. कैमरे से सीधे भेजें, गैलरी से नहीं";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+
+    // Reward screen buttons
+    if (buttonId === "btn_finish") {
+        await prisma.session.update({ where: { id: session.id }, data: { state: "COMPLETED", completedAt: new Date() } });
+        await logActivity({ event: "SESSION_COMPLETED", sessionId: session.id, bagId: session.bagId, phone });
+        const msg = (session.language || "en") === "en"
+            ? "🙏 Thank you for contributing to carbon removal!\n\nGG Krishi — Growing Green, Growing Gold."
+            : "🙏 कार्बन हटाने में योगदान के लिए धन्यवाद!\n\nGG Krishi — Growing Green, Growing Gold.";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+    if (buttonId === "btn_withdrawal") {
+        await logActivity({ event: "WITHDRAWAL_REQUESTED", sessionId: session.id, bagId: session.bagId, phone });
+        const msg = (session.language || "en") === "en"
+            ? "💰 Your withdrawal request has been logged. Our team will process it and contact you."
+            : "💰 आपका निकासी अनुरोध दर्ज हो गया है। हमारी टीम आपसे संपर्क करेगी।";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+    if (buttonId === "btn_reward_help") {
+        await logActivity({ event: "HELP_REQUESTED", sessionId: session.id, phone, details: { context: "reward_screen" } });
+        await sendWhatsAppMessage(phone, "📞 Your help request has been logged. Our team will contact you shortly.");
+        return;
+    }
+}
+
+// ─── Text Message Handler ────────────────────────────────────────────
+
+async function handleTextMessage(
+    phone: string,
+    user: { id: string; phone: string; name: string | null; language: string },
+    session: SessionData | null,
+    text: string
+): Promise<void> {
+    // Check for structured QR payload: GGKRISHI|BAG_ID|BATCH_ID|TOKEN
+    if (text.toUpperCase().startsWith("GGKRISHI|")) {
+        await handleQRPayload(phone, user, text);
+        return;
+    }
+
+    // Check for plain bag label (GG-... format — manual entry or legacy QR)
+    if (text.toUpperCase().startsWith("GG-")) {
+        await handleBagEntry(phone, user, text.toUpperCase(), "PILOT_MRV");
+        return;
+    }
+
+    // If session is in NAME_CONFIRM state, treat text as name edit
+    if (session && session.state === "NAME_CONFIRM") {
+        const editedName = text.trim().substring(0, 100);
+        await prisma.user.update({ where: { id: user.id }, data: { name: editedName } });
+        await prisma.session.update({ where: { id: session.id }, data: { userName: editedName, state: "AWAITING_GPS" } });
+        await logActivity({ event: "NAME_CONFIRMED", sessionId: session.id, phone, details: { name: editedName, edited: true } });
+        await sendLocationRequest(phone, session.language || "en");
+        return;
+    }
+
+    // If in an active session, guide user to correct input
+    if (session) {
+        await sendStateGuidance(phone, session);
+        return;
+    }
+
+    // Check if user was asked for bag ID (last log is BAG_ID_INPUT_REQUESTED)
+    const lastLog = await prisma.activityLog.findFirst({
+        where: { phone, event: "BAG_ID_INPUT_REQUESTED" },
+        orderBy: { timestamp: "desc" },
+    });
+    if (lastLog && (Date.now() - lastLog.timestamp.getTime()) < 5 * 60 * 1000) {
+        // Treat text as bag ID
+        await handleBagEntry(phone, user, text.toUpperCase().trim(), "PILOT_MRV");
+        return;
+    }
+
+    // No session, no QR → show gate screen
+    await sendGateScreen(phone);
+}
+
+// ─── QR Payload Parser ───────────────────────────────────────────────
+
+async function handleQRPayload(
+    phone: string,
+    user: { id: string },
+    payload: string
+): Promise<void> {
+    const parts = payload.split("|");
+    if (parts.length < 4) {
+        await sendWhatsAppMessage(phone, "❌ Invalid QR code format. Please try scanning again.");
+        return;
+    }
+
+    const [, bagLabel, , token] = parts;
+    const policy = token?.toUpperCase() === "DEMO" ? "DEMO_AUTO" : "PILOT_MRV";
+
+    await handleBagEntry(phone, user, bagLabel.toUpperCase(), policy);
+}
+
+// ─── Bag Entry (shared by QR and manual) ─────────────────────────────
+
+async function handleBagEntry(
+    phone: string,
+    user: { id: string },
+    label: string,
+    policy: string
+): Promise<void> {
+    // Look up bag
+    const bag = await prisma.bag.findUnique({ where: { label } });
+
+    if (!bag) {
+        await logActivity({ event: "BAG_NOT_FOUND", phone, details: { label } });
+        await sendWhatsAppMessage(phone, "❌ Unknown bag ID. Please check the QR code or bag label and try again.");
+        await sendGateScreen(phone);
+        return;
+    }
+
+    if (bag.status !== "unused") {
+        await logActivity({
+            event: "BAG_CLAIM_REJECTED",
+            bagId: bag.bagId,
+            phone,
+            details: { reason: "already used", currentStatus: bag.status },
+        });
+        await sendWhatsAppMessage(phone,
+            `⚠️ Bag ${label} has already been used.\n\nThis bag cannot be verified again. If you believe this is an error, tap Need Help.`
+        );
+        return;
+    }
+
+    // Expire any stale sessions for this user
+    await expireOldSessions(phone);
+
+    // Create session
+    const session = await prisma.session.create({
+        data: {
+            userId: user.id,
+            bagId: bag.bagId,
+            verificationPolicy: policy,
+            state: "LANGUAGE_SELECT",
+        },
+    });
+
+    // Mark bag as in_session
+    await prisma.bag.update({
+        where: { bagId: bag.bagId },
+        data: { status: "in_session", assignedUserId: user.id },
+    });
+
+    await logActivity({
+        event: "SESSION_STARTED",
+        sessionId: session.id,
+        bagId: bag.bagId,
+        phone,
+        details: { label, policy },
+    });
+
+    // Skip gate, go directly to language selection
+    await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
+        { id: "lang_en", title: "English" },
+        { id: "lang_hi", title: "हिंदी" },
+    ]);
+}
+
+// ─── Location Handler ────────────────────────────────────────────────
+
+async function handleLocation(
+    phone: string,
+    user: { id: string },
+    session: SessionData | null,
+    lat: number,
+    lng: number
+): Promise<void> {
+    if (!session || session.state !== "AWAITING_GPS") {
+        if (!session) await sendGateScreen(phone);
+        else await sendStateGuidance(phone, session);
+        return;
+    }
+
+    // Create submission with location
+    await prisma.submission.create({
+        data: {
+            sessionId: session.id,
+            userId: user.id,
+            bagId: session.bagId,
+            latitude: lat,
+            longitude: lng,
+            locationTimestamp: new Date(),
+            verificationPolicy: session.verificationPolicy,
+        },
+    });
+
+    await prisma.session.update({ where: { id: session.id }, data: { state: "AWAITING_PHOTO" } });
+
+    await logActivity({
+        event: "GPS_RECEIVED",
+        sessionId: session.id,
+        bagId: session.bagId,
+        phone,
+        details: { lat, lng },
+    });
+
+    const lang = session.language || "en";
+    const msg = lang === "en"
+        ? "✅ Location received!\n\n📸 Step 2: Capture a photo of biochar applied to soil."
+        : "✅ लोकेशन मिल गई!\n\n📸 चरण 2: मिट्टी पर लगाए गए बायोचार की फोटो लें।";
+
+    await sendInteractiveButtons(phone, msg, [
+        { id: "btn_open_camera", title: lang === "en" ? "📷 Open Camera" : "📷 कैमरा खोलें" },
+        { id: "btn_photo_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद चाहिए" },
+    ]);
+}
+
+// ─── Image Handler ───────────────────────────────────────────────────
+
+async function handleImage(
+    phone: string,
+    user: { id: string },
+    session: SessionData | null,
+    mediaId: string
+): Promise<void> {
+    if (!session || session.state !== "AWAITING_PHOTO") {
+        if (!session) await sendGateScreen(phone);
+        else await sendStateGuidance(phone, session);
+        return;
+    }
+
+    // Find the submission for this session
+    const submission = await prisma.submission.findUnique({ where: { sessionId: session.id } });
+    if (!submission) {
+        await sendWhatsAppMessage(phone, "❌ Something went wrong. Please try again.");
+        return;
+    }
+
+    await prisma.session.update({ where: { id: session.id }, data: { state: "PROCESSING" } });
+
+    const lang = session.language || "en";
+    const processingMsg = lang === "en" ? "⏳ Analyzing your submission..." : "⏳ आपका सबमिशन जाँचा जा रहा है...";
+    await sendWhatsAppMessage(phone, processingMsg);
+
+    try {
+        // Download image
+        const imagePath = await downloadWhatsAppMedia(mediaId, submission.id);
+        const hash = computeImageHash(imagePath);
+
+        await logActivity({
+            event: "IMAGE_RECEIVED",
+            sessionId: session.id,
+            bagId: session.bagId,
+            submissionId: submission.id,
+            phone,
+            details: { imageSha256: hash },
+        });
+
+        // Check for duplicate image
+        const duplicateId = await checkDuplicateSubmission(hash, submission.id);
+        if (duplicateId) {
+            await logActivity({
+                event: "IMAGE_DUPLICATE",
+                sessionId: session.id,
+                bagId: session.bagId,
+                submissionId: submission.id,
+                phone,
+                details: { matchedSubmissionId: duplicateId },
+            });
+        }
+
+        // ─── DEMO_AUTO: instant verify ───
+        if (session.verificationPolicy === "DEMO_AUTO") {
+            await new Promise((r) => setTimeout(r, 2500)); // Simulated 2.5s delay
+
+            await prisma.submission.update({
+                where: { id: submission.id },
+                data: {
+                    mediaUrl: imagePath,
+                    mediaHash: hash,
+                    verificationStatus: "VERIFIED",
+                    aiConfidence: 0.99,
+                    aiResponse: JSON.stringify({ mode: "DEMO_AUTO", auto_verified: true }),
+                    fraudScore: 0,
+                },
+            });
+
+            await prisma.bag.update({ where: { bagId: session.bagId }, data: { status: "used" } });
+            await prisma.session.update({ where: { id: session.id }, data: { state: "REWARD" } });
+
+            await logActivity({
+                event: "DEMO_VERIFICATION",
+                sessionId: session.id,
+                bagId: session.bagId,
+                submissionId: submission.id,
+                phone,
+                details: { policy: "DEMO_AUTO" },
+            });
+
+            await sendRewardScreen(phone, session, lang);
+            return;
+        }
+
+        // ─── PILOT_MRV: rule-based + optional AI ───
+
+        // Rule checks
+        const ruleFlags: string[] = [];
+
+        // 1. Bag exists and unused — already verified at entry
+        // 2. Location exists
+        if (!submission.latitude || !submission.longitude) {
+            ruleFlags.push("MISSING_LOCATION");
+        }
+        // 3. Image exists — we have it
+        // 4. Duplicate check
+        if (duplicateId) {
+            ruleFlags.push("IMAGE_DUPLICATE_HASH");
+        }
+
+        // 5. AI image sanity check (liberal threshold)
+        let aiResult;
+        try {
+            aiResult = await analyzeImage(imagePath);
+            await logActivity({
+                event: "AI_ANALYSIS_COMPLETE",
+                sessionId: session.id,
+                bagId: session.bagId,
+                submissionId: submission.id,
+                details: { confidence: aiResult.confidence, aiResponse: aiResult },
+            });
+
+            // Liberal threshold — only flag if clearly bad
+            if (aiResult.confidence < 0.3) {
+                ruleFlags.push("VERY_LOW_AI_CONFIDENCE");
+            }
+            if (aiResult.screen_capture_detected) {
+                ruleFlags.push("SCREEN_CAPTURE_DETECTED");
+            }
+        } catch (aiErr) {
+            await logActivity({
+                event: "AI_ANALYSIS_FAILED",
+                sessionId: session.id,
+                bagId: session.bagId,
+                submissionId: submission.id,
+                level: "ERROR",
+                details: { error: String(aiErr) },
+            });
+            // AI failure is not a blocker — continue without it
+            aiResult = { confidence: 0, flags: ["AI_UNAVAILABLE"] } as any;
+        }
+
+        // Decision
+        const hasIssues = ruleFlags.length > 0;
+        const verificationStatus = hasIssues ? "PENDING_REVIEW" : "VERIFIED";
+
+        await prisma.submission.update({
+            where: { id: submission.id },
+            data: {
+                mediaUrl: imagePath,
+                mediaHash: hash,
+                verificationStatus,
+                verificationPolicy: "PILOT_MRV",
+                reviewFlag: hasIssues,
+                aiConfidence: aiResult?.confidence ?? null,
+                aiResponse: aiResult ? JSON.stringify(aiResult) : null,
+                fraudScore: ruleFlags.length > 0 ? ruleFlags.length * 0.25 : 0,
+                fraudFlags: ruleFlags.length > 0 ? JSON.stringify(ruleFlags) : null,
+            },
+        });
+
+        await prisma.bag.update({ where: { bagId: session.bagId }, data: { status: "used" } });
+        await prisma.session.update({ where: { id: session.id }, data: { state: "REWARD" } });
+
+        const eventName = verificationStatus === "VERIFIED" ? "VERIFICATION_APPROVED" : "VERIFICATION_PENDING";
+        await logActivity({
+            event: eventName,
+            sessionId: session.id,
+            bagId: session.bagId,
+            submissionId: submission.id,
+            phone,
+            details: { verificationStatus, flags: ruleFlags, confidence: aiResult?.confidence },
+        });
+
+        if (verificationStatus === "VERIFIED") {
+            await sendRewardScreen(phone, session, lang);
+        } else {
+            // PENDING_REVIEW
+            const msg = lang === "en"
+                ? "⏳ Your submission is under review.\n\nOur team will verify and notify you once it's approved. Thank you for your patience!"
+                : "⏳ आपका सबमिशन समीक्षा में है।\n\nहमारी टीम जाँच करके आपको सूचित करेगी। धन्यवाद!";
+            await sendInteractiveButtons(phone, msg, [
+                { id: "btn_finish", title: lang === "en" ? "👋 OK" : "👋 ठीक" },
+                { id: "btn_reward_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद" },
+            ]);
+            await prisma.session.update({ where: { id: session.id }, data: { state: "COMPLETED", completedAt: new Date() } });
+        }
+    } catch (err) {
+        console.error("Image processing error:", err);
+        await sendWhatsAppMessage(phone, "❌ Something went wrong processing your image. Please try sending it again.");
+        await prisma.session.update({ where: { id: session.id }, data: { state: "AWAITING_PHOTO" } });
+    }
+}
+
+// ─── Reward Screen ───────────────────────────────────────────────────
+
+async function sendRewardScreen(phone: string, session: SessionData, lang: string): Promise<void> {
+    const bag = await prisma.bag.findUnique({ where: { bagId: session.bagId } });
+    const bagLabel = bag?.label || "Unknown";
+
+    const msg = lang === "en"
+        ? `✅ *Verification Successful!*\n\n🏷 Bag: ${bagLabel}\n💰 ₹1111 added to your GG Wallet\n🌍 1,500 kg CO₂ permanently sequestered\n\nThank you for contributing to carbon removal!`
+        : `✅ *सत्यापन सफल!*\n\n🏷 बैग: ${bagLabel}\n💰 ₹1111 आपके GG वॉलेट में जोड़े गए\n🌍 1,500 kg CO₂ स्थायी रूप से अलग किया गया\n\nकार्बन हटाने में योगदान के लिए धन्यवाद!`;
+
+    await sendInteractiveButtons(phone, msg, [
+        { id: "btn_finish", title: lang === "en" ? "✅ Finish" : "✅ समाप्त" },
+        { id: "btn_withdrawal", title: lang === "en" ? "💰 Withdrawal" : "💰 निकासी" },
+        { id: "btn_reward_help", title: lang === "en" ? "❓ Help" : "❓ मदद" },
+    ]);
+}
+
+// ─── Gate Screen ─────────────────────────────────────────────────────
+
+async function sendGateScreen(phone: string): Promise<void> {
+    await sendInteractiveButtons(
+        phone,
+        "🌱 *Welcome to GG Krishi*\n\nTo begin, scan your GG bag QR or enter your Bag ID.",
+        [
+            { id: "btn_scan_qr", title: "📱 Scan QR" },
+            { id: "btn_enter_bag_id", title: "📝 Enter Bag ID" },
+            { id: "btn_need_help", title: "❓ Need Help" },
+        ]
+    );
+    // Note: WhatsApp buttons max is 3. "Explore More" sent as follow-up.
+    // We could use a list instead but keeping it button-first for simplicity.
+}
+
+// ─── State Guidance ──────────────────────────────────────────────────
+
+async function sendStateGuidance(phone: string, session: SessionData): Promise<void> {
+    const lang = session.language || "en";
+
+    if (session.state === "AWAITING_GPS") {
+        await sendLocationRequest(phone, lang);
+    } else if (session.state === "AWAITING_PHOTO") {
+        const msg = lang === "en"
+            ? "📸 Please send a photo of biochar applied on soil."
+            : "📸 कृपया मिट्टी पर लगाए गए बायोचार की फोटो भेजें।";
+        await sendInteractiveButtons(phone, msg, [
+            { id: "btn_open_camera", title: lang === "en" ? "📷 Open Camera" : "📷 कैमरा खोलें" },
+            { id: "btn_photo_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद" },
+        ]);
+    } else if (session.state === "LANGUAGE_SELECT") {
+        await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
+            { id: "lang_en", title: "English" },
+            { id: "lang_hi", title: "हिंदी" },
+        ]);
+    } else if (session.state === "NAME_CONFIRM") {
+        const displayName = session.userName || "Farmer";
+        await sendInteractiveButtons(phone, `Is your name *${displayName}*?`, [
+            { id: "name_yes", title: "✅ Yes" },
+            { id: "name_edit", title: "✏️ Edit" },
+        ]);
+    }
+}
+
+// ─── Location Request ────────────────────────────────────────────────
+
+async function sendLocationRequest(phone: string, lang: string): Promise<void> {
+    const msg = lang === "en"
+        ? "📍 Share your current field location.\n\nTap 📎 → Location → Send Current Location"
+        : "📍 अपना मौजूदा खेत का स्थान साझा करें।\n\n📎 → Location → Send Current Location दबाएं";
+    await sendWhatsAppMessage(phone, msg);
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+type SessionData = {
+    id: string;
+    userId: string;
+    bagId: string;
+    verificationPolicy: string;
+    state: string;
+    language: string | null;
+    userName: string | null;
+    startedAt: Date;
+};
+
+async function getOrCreateUser(phone: string, profileName: string | null) {
+    let user = await prisma.user.findUnique({ where: { phone } });
+    if (!user) {
+        user = await prisma.user.create({
+            data: { phone, name: profileName },
+        });
+    } else if (profileName && !user.name) {
+        user = await prisma.user.update({
+            where: { phone },
+            data: { name: profileName },
+        });
+    }
+    return user;
+}
+
+async function getActiveSession(phone: string): Promise<SessionData | null> {
+    const user = await prisma.user.findUnique({ where: { phone } });
+    if (!user) return null;
+
+    const session = await prisma.session.findFirst({
+        where: {
+            userId: user.id,
+            state: { notIn: ["COMPLETED"] },
+            timeoutFlag: false,
+        },
+        orderBy: { startedAt: "desc" },
+    });
+
+    if (!session) return null;
+
+    // Check timeout
+    if (Date.now() - session.startedAt.getTime() > SESSION_TIMEOUT_MS) {
+        await prisma.session.update({ where: { id: session.id }, data: { timeoutFlag: true } });
+        // Reset bag if still in_session
+        await prisma.bag.updateMany({
+            where: { bagId: session.bagId, status: "in_session" },
+            data: { status: "unused", assignedUserId: null },
+        });
+        await logActivity({
+            event: "SESSION_TIMEOUT",
+            sessionId: session.id,
+            bagId: session.bagId,
+            phone,
+        });
+        return null;
+    }
+
+    return session as SessionData;
+}
+
+async function expireOldSessions(phone: string): Promise<void> {
+    const user = await prisma.user.findUnique({ where: { phone } });
+    if (!user) return;
+
+    const activeSessions = await prisma.session.findMany({
+        where: { userId: user.id, state: { notIn: ["COMPLETED"] }, timeoutFlag: false },
+    });
+
+    for (const s of activeSessions) {
+        await prisma.session.update({ where: { id: s.id }, data: { timeoutFlag: true } });
+        await prisma.bag.updateMany({
+            where: { bagId: s.bagId, status: "in_session" },
+            data: { status: "unused", assignedUserId: null },
+        });
+    }
+}
+
+async function checkDuplicateSubmission(hash: string, currentSubmissionId: string): Promise<string | null> {
+    const existing = await prisma.submission.findFirst({
+        where: {
+            mediaHash: hash,
+            id: { not: currentSubmissionId },
+        },
+    });
+    return existing ? existing.id : null;
+}
+
+// ─── WhatsApp API Helpers ────────────────────────────────────────────
+
+async function sendWhatsAppMessage(to: string, body: string): Promise<void> {
+    if (!WHATSAPP_API_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        console.log(`📱 [MOCK] To ${to}: ${body}`);
+        return;
+    }
+    await graphApiPost({ messaging_product: "whatsapp", to, type: "text", text: { body } });
+}
+
+async function sendInteractiveButtons(
+    to: string,
+    bodyText: string,
+    buttons: Array<{ id: string; title: string }>
+): Promise<void> {
+    if (!WHATSAPP_API_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        console.log(`📱 [MOCK BUTTONS] To ${to}: ${bodyText} | Buttons: ${buttons.map(b => b.title).join(", ")}`);
+        return;
+    }
+
+    await graphApiPost({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+            type: "button",
+            body: { text: bodyText },
+            action: {
+                buttons: buttons.map((b) => ({
+                    type: "reply",
+                    reply: { id: b.id, title: b.title.substring(0, 20) }, // Max 20 chars
+                })),
+            },
+        },
+    });
+}
+
+async function sendInteractiveList(
+    to: string,
+    headerText: string,
+    bodyText: string,
+    buttonLabel: string,
+    items: Array<{ id: string; title: string }>
+): Promise<void> {
+    if (!WHATSAPP_API_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        console.log(`📱 [MOCK LIST] To ${to}: ${bodyText}`);
+        return;
+    }
+
+    await graphApiPost({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+            type: "list",
+            header: { type: "text", text: headerText },
+            body: { text: bodyText },
+            action: {
+                button: buttonLabel,
+                sections: [
+                    {
+                        title: "Options",
+                        rows: items.map((item) => ({
+                            id: item.id,
+                            title: item.title.substring(0, 24),
+                        })),
+                    },
+                ],
+            },
+        },
+    });
+}
+
+function graphApiPost(data: Record<string, unknown>): Promise<void> {
+    const payload = JSON.stringify(data);
+    const options = {
+        hostname: "graph.facebook.com",
+        path: `/v22.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`,
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${WHATSAPP_API_TOKEN}`,
+        },
+    };
+
+    return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+            let responseData = "";
+            res.on("data", (chunk) => (responseData += chunk));
+            res.on("end", () => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    console.error(`WhatsApp API error ${res.statusCode}:`, responseData);
+                }
+                resolve();
+            });
+        });
+        req.on("error", reject);
+        req.write(payload);
+        req.end();
+    });
+}
+
+async function downloadWhatsAppMedia(mediaId: string, submissionId: string): Promise<string> {
+    if (!WHATSAPP_API_TOKEN) {
+        console.log(`📥 [MOCK] Would download media ${mediaId}`);
+        return path.join(UPLOADS_DIR, `${submissionId}.jpg`);
+    }
+
+    // Step 1: Get media URL
+    const mediaUrl = await new Promise<string>((resolve, reject) => {
+        const options = {
+            hostname: "graph.facebook.com",
+            path: `/v22.0/${mediaId}`,
+            method: "GET",
+            headers: { Authorization: `Bearer ${WHATSAPP_API_TOKEN}` },
+        };
+        const req = https.request(options, (res) => {
+            let data = "";
+            res.on("data", (chunk) => (data += chunk));
+            res.on("end", () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    resolve(parsed.url);
+                } catch {
+                    reject(new Error(`Failed to parse media URL: ${data}`));
+                }
+            });
+        });
+        req.on("error", reject);
+        req.end();
+    });
+
+    // Step 2: Download the actual file
+    const filePath = path.join(UPLOADS_DIR, `${submissionId}.jpg`);
+    await new Promise<void>((resolve, reject) => {
+        const url = new URL(mediaUrl);
+        const options = {
+            hostname: url.hostname,
+            path: url.pathname + url.search,
+            method: "GET",
+            headers: { Authorization: `Bearer ${WHATSAPP_API_TOKEN}` },
+        };
+        const req = https.request(options, (res) => {
+            const fileStream = fs.createWriteStream(filePath);
+            res.pipe(fileStream);
+            fileStream.on("finish", () => {
+                fileStream.close();
+                resolve();
+            });
+        });
+        req.on("error", reject);
+        req.end();
+    });
+
+    return filePath;
+}
+
+export default router;
