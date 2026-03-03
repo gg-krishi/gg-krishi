@@ -609,7 +609,7 @@ async function handleImage(
 
 // ─── Reward Screen ───────────────────────────────────────────────────
 
-async function sendRewardScreen(phone: string, session: SessionData, lang: string): Promise<void> {
+export async function sendRewardScreen(phone: string, session: any, lang: string): Promise<void> {
     const bag = await prisma.bag.findUnique({ where: { bagId: session.bagId } });
     const bagLabel = bag?.label || "Unknown";
 
@@ -778,7 +778,7 @@ async function sendWhatsAppMessage(to: string, body: string): Promise<void> {
     await graphApiPost({ messaging_product: "whatsapp", to, type: "text", text: { body } });
 }
 
-async function sendInteractiveButtons(
+export async function sendInteractiveButtons(
     to: string,
     bodyText: string,
     buttons: Array<{ id: string; title: string }>

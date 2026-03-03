@@ -1,8 +1,8 @@
-import { GoogleGenerativeAI, Part } from "@google/generative-ai";
+import Groq from "groq-sdk";
 import * as fs from "fs";
 import * as path from "path";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 export interface AIVerificationResult {
     biochar_visible: boolean;
@@ -45,42 +45,38 @@ Return ONLY a JSON object with this exact structure, no markdown or extra text:
 Be strict. If anything looks suspicious, lower the confidence score and add to flags.`;
 
 export async function analyzeImage(imagePath: string): Promise<AIVerificationResult> {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    // Read image file and convert to base64
     const imageBuffer = fs.readFileSync(imagePath);
     const base64Image = imageBuffer.toString("base64");
 
-    // Determine mime type from extension
     const ext = path.extname(imagePath).toLowerCase();
-    const mimeType =
-        ext === ".png" ? "image/png" :
-            ext === ".webp" ? "image/webp" :
-                "image/jpeg";
-
-    const imagePart: Part = {
-        inlineData: {
-            mimeType,
-            data: base64Image,
-        },
-    };
-
-    const result = await model.generateContent([SYSTEM_PROMPT, imagePart]);
-    const response = result.response;
-    const text = response.text();
-
-    // Parse JSON from response (handle markdown code blocks)
-    let jsonStr = text;
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (jsonMatch) {
-        jsonStr = jsonMatch[1];
-    }
+    const mimeType = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
 
     try {
+        const completion = await groq.chat.completions.create({
+            model: "meta-llama/llama-4-maverick-17b-128e-instruct",
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: SYSTEM_PROMPT },
+                        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Image}` } }
+                    ]
+                }
+            ],
+            temperature: 0,
+        });
+
+        const text = completion.choices[0]?.message?.content || "";
+
+        let jsonStr = text;
+        const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+            jsonStr = jsonMatch[1];
+        }
+
         const parsed = JSON.parse(jsonStr.trim()) as AIVerificationResult;
         return parsed;
-    } catch {
-        // If parsing fails, return a low-confidence result
+    } catch (err: any) {
         return {
             biochar_visible: false,
             gg_bag_visible: false,
@@ -89,7 +85,7 @@ export async function analyzeImage(imagePath: string): Promise<AIVerificationRes
             human_present: false,
             screen_capture_detected: false,
             confidence: 0,
-            flags: ["AI_PARSE_ERROR", `Raw response: ${text.substring(0, 200)}`],
+            flags: ["AI_PARSE_ERROR", `Groq error or parsing failed: ${err.message}`],
         };
     }
 }

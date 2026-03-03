@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import * as QRCode from "qrcode";
 import prisma, { logActivity } from "./logger";
-import whatsappRouter from "./whatsapp";
+import whatsappRouter, { sendRewardScreen, sendInteractiveButtons } from "./whatsapp";
 
 dotenv.config();
 
@@ -123,7 +123,7 @@ app.get("/api/bags/:id/qr", async (req, res) => {
         }
 
         const waNumber = process.env.WHATSAPP_PHONE_NUMBER || "91XXXXXXXXXX";
-        const mode = req.query.mode === "DEMO" ? "DEMO" : "PILOT";
+        const mode = bag.batchId?.includes("DEMO") ? "DEMO" : "PILOT";
         const payload = `GGKRISHI|${bag.label}|${bag.batchId || "DEFAULT"}|${mode}`;
         const qrData = `https://wa.me/${waNumber}?text=${encodeURIComponent(payload)}`;
 
@@ -210,6 +210,7 @@ app.post("/api/submissions/:id/approve", async (req, res) => {
         const submission = await prisma.submission.update({
             where: { id: req.params.id },
             data: { verificationStatus: "VERIFIED", reviewFlag: false },
+            include: { user: true, session: true },
         });
         await logActivity({
             event: "SUBMISSION_APPROVED",
@@ -217,6 +218,16 @@ app.post("/api/submissions/:id/approve", async (req, res) => {
             bagId: submission.bagId,
             details: { manual: true },
         });
+
+        // Send WhatsApp success message
+        if (submission.user?.phone && submission.session) {
+            try {
+                await sendRewardScreen(submission.user.phone, submission.session, submission.user.language || "en");
+            } catch (waErr) {
+                console.error("Failed to send WA approval message:", waErr);
+            }
+        }
+
         res.json(submission);
     } catch (err) {
         console.error("Approve error:", err);
@@ -230,6 +241,7 @@ app.post("/api/submissions/:id/reject", async (req, res) => {
         const submission = await prisma.submission.update({
             where: { id: req.params.id },
             data: { verificationStatus: "REJECTED", reviewFlag: false },
+            include: { user: true },
         });
         // Also flag the bag
         await prisma.bag.update({
@@ -242,6 +254,23 @@ app.post("/api/submissions/:id/reject", async (req, res) => {
             bagId: submission.bagId,
             details: { manual: true },
         });
+
+        // Send WhatsApp rejection message
+        if (submission.user?.phone) {
+            try {
+                const lang = submission.user.language || "en";
+                const msg = lang === "en"
+                    ? "❌ Your photo submission has been rejected upon manual review.\n\nPlease contact customer support for further assistance."
+                    : "❌ मैन्युअल समीक्षा के बाद आपकी फ़ोटो अस्वीकार कर दी गई है।\n\nकृपया सहायता के लिए ग्राहक सेवा से संपर्क करें।";
+
+                await sendInteractiveButtons(submission.user.phone, msg, [
+                    { id: "btn_need_help", title: lang === "en" ? "❓ Contact Support" : "❓ ग्राहक सेवा" }
+                ]);
+            } catch (waErr) {
+                console.error("Failed to send WA rejection message:", waErr);
+            }
+        }
+
         res.json(submission);
     } catch (err) {
         console.error("Reject error:", err);

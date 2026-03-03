@@ -25,9 +25,8 @@ export default function BagsPage() {
     const [bags, setBags] = useState<Bag[]>([]);
     const [loading, setLoading] = useState(true);
     const [creating, setCreating] = useState(false);
-    const [qrModal, setQrModal] = useState<{ bagId: string; label: string; status: string } | null>(null);
+    const [qrModal, setQrModal] = useState<{ bagId: string; label: string; status: string; mode: string } | null>(null);
     const [qrSvg, setQrSvg] = useState("");
-    const [qrMode, setQrMode] = useState<"PILOT" | "DEMO">("PILOT");
 
     const fetchBags = useCallback(async () => {
         try {
@@ -57,7 +56,7 @@ export default function BagsPage() {
             });
             const bag = await res.json();
             await fetchBags();
-            showQr(bag.bagId, bag.label, bag.status);
+            showQr(bag.bagId, bag.label, bag.status, bag.batchId);
         } catch (err) {
             console.error("Failed to create bag:", err);
         } finally {
@@ -74,10 +73,11 @@ export default function BagsPage() {
         }
     };
 
-    const showQr = async (bagId: string, label: string, status: string) => {
-        setQrModal({ bagId, label, status });
+    const showQr = async (bagId: string, label: string, status: string, batchId: string | null) => {
+        const mode = batchId?.includes("DEMO") ? "DEMO" : "PILOT";
+        setQrModal({ bagId, label, status, mode });
         try {
-            const res = await fetch(`${API}/api/bags/${bagId}/qr?mode=${qrMode}`);
+            const res = await fetch(`${API}/api/bags/${bagId}/qr`);
             const svg = await res.text();
             setQrSvg(svg);
         } catch (err) {
@@ -149,7 +149,7 @@ export default function BagsPage() {
                                         <td style={{ padding: "12px 16px", fontSize: 13, color: "var(--text-secondary)" }}>{formatDate(bag.createdAt)}</td>
                                         <td style={{ padding: "12px 16px", textAlign: "center" }}>
                                             <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
-                                                <button onClick={() => showQr(bag.bagId, bag.label, bag.status)}
+                                                <button onClick={() => showQr(bag.bagId, bag.label, bag.status, bag.batchId)}
                                                     style={{ padding: "5px 10px", background: "var(--bg-primary)", color: "var(--text-primary)", border: "1px solid var(--border)", borderRadius: 6, fontSize: 11, cursor: "pointer" }}>
                                                     QR
                                                 </button>
@@ -177,16 +177,6 @@ export default function BagsPage() {
                         <h3 style={{ margin: "0 0 4px", fontSize: 16, fontWeight: 600 }}>{qrModal.label}</h3>
                         <p style={{ margin: "0 0 12px", fontSize: 12, color: "var(--text-muted)" }}>Scan with phone to open WhatsApp</p>
 
-                        {/* Mode toggle */}
-                        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 16 }}>
-                            {(["PILOT", "DEMO"] as const).map((m) => (
-                                <button key={m} onClick={async () => { setQrMode(m); const res = await fetch(`${API}/api/bags/${qrModal.bagId}/qr?mode=${m}`); setQrSvg(await res.text()); }}
-                                    style={{ padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)", fontSize: 12, fontWeight: 600, cursor: "pointer", background: qrMode === m ? (m === "DEMO" ? "rgba(168,85,247,0.2)" : "rgba(34,197,94,0.2)") : "transparent", color: qrMode === m ? (m === "DEMO" ? "#a855f7" : "#22c55e") : "var(--text-muted)" }}>
-                                    {m === "DEMO" ? "🎭 Demo" : "🌾 Pilot"}
-                                </button>
-                            ))}
-                        </div>
-
                         <div style={{ background: "#fff", borderRadius: 12, padding: 20, display: "inline-block" }}>
                             {qrSvg ? (
                                 <div dangerouslySetInnerHTML={{ __html: qrSvg }} style={{ width: 200, height: 200 }} />
@@ -195,7 +185,7 @@ export default function BagsPage() {
                             )}
                         </div>
                         <p style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
-                            Mode: <strong>{qrMode === "DEMO" ? "Investor Demo (auto-verify)" : "Pilot MRV (AI verification)"}</strong>
+                            Mode: <strong>{qrModal.mode === "DEMO" ? "Investor Demo (auto-verify)" : "Pilot MRV (AI verification)"}</strong>
                         </p>
                     </div>
                 </div>
