@@ -20,7 +20,8 @@ app.use("/api/whatsapp/webhook", whatsappRouter);
 
 // ─── Static Files ────────────────────────────────────────────────────
 import * as path from "path";
-app.use("/assets", express.static(path.join(__dirname, "../src")));
+// Serve from 'public' folder (works in both dev and production)
+app.use("/assets", express.static(path.join(__dirname, "../public")));
 
 // ─── Bag CRUD ────────────────────────────────────────────────────────
 

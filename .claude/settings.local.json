@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(where:*)",
+      "Bash(curl:*)",
+      "Bash(magick:*)",
+      "Bash(npm install:*)",
+      "Bash(node compress-image.js:*)",
+      "Bash(python compress_image.py:*)",
+      "Bash(pip install:*)",
+      "Bash(C:UsersheybaAppDataLocalProgramsPythonPython312python.exe -m pip install:*)",
+      "Bash(C:UsersheybaAppDataLocalProgramsPythonPython312python.exe \"C:\\\\Users\\\\heyba\\\\OneDrive\\\\Desktop\\\\gg-krishi\\\\server\\\\compress_image.py\")",
+      "Bash(npx shadcn@latest add:*)",
+      "Bash(npx shadcn-ui@latest add:*)",
+      "Bash(npm ls:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npx prisma migrate:*)",
+      "Bash(npx prisma db push:*)"
+    ]
+  }
+}

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { CalendarDays, Filter, CheckCircle, RefreshCw, X, User } from "lucide-react";
-import { 
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -46,7 +46,7 @@ const stateConfig: Record<string, { variant: "default" | "secondary" | "destruct
     GATE: { variant: "secondary" },
 };
 
-export default function SessionsPage() {
+function SessionsContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const userIdFilter = searchParams.get("userId");
@@ -365,5 +365,13 @@ export default function SessionsPage() {
                 </DialogContent>
             </Dialog>
         </div>
+    );
+}
+
+export default function SessionsPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center h-64"><Skeleton className="h-8 w-32" /></div>}>
+            <SessionsContent />
+        </Suspense>
     );
 }

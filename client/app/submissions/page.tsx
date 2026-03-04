@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { FileText, Download, Check, X, Image as ImageIcon, MapPin, CheckCircle, AlertTriangle, XCircle, User } from "lucide-react";
@@ -48,7 +48,7 @@ const statusConfig: Record<string, { variant: "default" | "secondary" | "destruc
     REJECTED: { variant: "destructive" },
 };
 
-export default function SubmissionsPage() {
+function SubmissionsContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const userIdFilter = searchParams.get("userId");
@@ -553,5 +553,13 @@ export default function SubmissionsPage() {
                 </DialogContent>
             </Dialog>
         </div>
+    );
+}
+
+export default function SubmissionsPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center h-64"><Skeleton className="h-8 w-32" /></div>}>
+            <SubmissionsContent />
+        </Suspense>
     );
 }
