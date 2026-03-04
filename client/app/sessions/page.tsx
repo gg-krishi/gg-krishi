@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, Filter } from "lucide-react";
+import { CalendarDays, Filter, CheckCircle, RefreshCw } from "lucide-react";
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -10,6 +10,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { PremiumStatCard, PremiumStatCardGrid } from "@/components/ui/premium-stat-card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
@@ -41,9 +48,14 @@ const stateConfig: Record<string, { variant: "default" | "secondary" | "destruct
 export default function SessionsPage() {
     const [sessions, setSessions] = useState<Session[]>([]);
     const [loading, setLoading] = useState(true);
+    const [isFiltering, setIsFiltering] = useState(false);
     const [filter, setFilter] = useState<string>("");
 
-    const fetchSessions = useCallback(async () => {
+    const [detailsModalOpen, setDetailsModalOpen] = useState(false);
+    const [selectedSession, setSelectedSession] = useState<Session | null>(null);
+
+    const fetchSessions = useCallback(async (showLoading = false) => {
+        if (showLoading) setIsFiltering(true);
         try {
             const url = filter ? `${API}/api/sessions?policy=${filter}` : `${API}/api/sessions`;
             const res = await fetch(url);
@@ -53,12 +65,16 @@ export default function SessionsPage() {
             console.error("Failed to fetch sessions:", err); 
         } finally { 
             setLoading(false); 
+            setIsFiltering(false);
         }
     }, [filter]);
 
     useEffect(() => { 
-        fetchSessions(); 
-        const i = setInterval(fetchSessions, 5000); 
+        fetchSessions(true); 
+    }, [filter, fetchSessions]);
+
+    useEffect(() => {
+        const i = setInterval(() => fetchSessions(false), 5000); 
         return () => clearInterval(i); 
     }, [fetchSessions]);
 
@@ -66,24 +82,17 @@ export default function SessionsPage() {
         day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" 
     });
 
+    const completedSessions = sessions.filter(s => s.state === "COMPLETED").length;
+    const activeSessions = sessions.length - completedSessions;
+
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
-            <motion.div 
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4 }}
-                className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"
-            >
-                <div className="flex items-center gap-4">
-                    <div className="p-3 bg-primary/10 rounded-full">
-                        <CalendarDays className="h-6 w-6 text-primary" />
-                    </div>
-                    <div>
-                        <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
-                        <p className="text-muted-foreground mt-1 text-sm">
-                            {sessions.length} total sessions
-                        </p>
-                    </div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-2">
+                <div>
+                    <h1 className="text-3xl font-bold tracking-tight">Sessions</h1>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                        Monitor active verifications and user progress
+                    </p>
                 </div>
                 
                 <div className="flex items-center gap-2 bg-muted/50 p-1 rounded-lg border">
@@ -96,7 +105,7 @@ export default function SessionsPage() {
                             onClick={() => setFilter(f.id)}
                             className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
                                 filter === f.id 
-                                    ? f.id === "PILOT_MRV" ? "bg-green-600 hover:bg-green-700" : f.id === "DEMO_AUTO" ? "bg-purple-600 hover:bg-purple-700" : ""
+                                    ? f.id === "PILOT_MRV" ? "bg-green-600 hover:bg-green-700 shadow-sm" : f.id === "DEMO_AUTO" ? "bg-purple-600 hover:bg-purple-700 shadow-sm" : "shadow-sm"
                                     : ""
                             }`}
                         >
@@ -104,6 +113,42 @@ export default function SessionsPage() {
                         </Button>
                     ))}
                 </div>
+            </div>
+
+            <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4 }}
+            >
+                <PremiumStatCardGrid columns={3}>
+                    <PremiumStatCard
+                        title="Total Sessions"
+                        subtitle="All-time initiated sessions"
+                        value={sessions.length}
+                        icon={CalendarDays}
+                        iconColor="text-blue-500"
+                        iconBgColor="bg-blue-500/10"
+                        isLoading={loading}
+                    />
+                    <PremiumStatCard
+                        title="Completed"
+                        subtitle="Successfully finished"
+                        value={completedSessions}
+                        icon={CheckCircle}
+                        iconColor="text-green-500"
+                        iconBgColor="bg-green-500/10"
+                        isLoading={loading}
+                    />
+                    <PremiumStatCard
+                        title="Active / Pending"
+                        subtitle="Currently in progress"
+                        value={activeSessions}
+                        icon={RefreshCw}
+                        iconColor="text-amber-500"
+                        iconBgColor="bg-amber-500/10"
+                        isLoading={loading}
+                    />
+                </PremiumStatCardGrid>
             </motion.div>
 
             <motion.div
@@ -111,22 +156,22 @@ export default function SessionsPage() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.1 }}
             >
-                <Card className="shadow-sm">
-                    <CardContent className="p-0 sm:p-6 overflow-x-auto">
+                <Card className="shadow-sm border-border/40 overflow-hidden">
+                    <CardContent className="p-0 overflow-x-auto">
                         <Table className="min-w-[800px]">
-                        <TableHeader>
-                            <TableRow className="hover:bg-transparent">
-                                <TableHead className="font-medium">User</TableHead>
-                                <TableHead className="font-medium">Bag</TableHead>
-                                <TableHead className="font-medium">Policy</TableHead>
-                                <TableHead className="font-medium">State</TableHead>
-                                <TableHead className="font-medium">Result</TableHead>
-                                <TableHead className="font-medium">Started</TableHead>
-                                <TableHead className="text-right font-medium">Flags</TableHead>
+                        <TableHeader className="bg-muted/10">
+                            <TableRow className="hover:bg-transparent border-border/30">
+                                <TableHead className="font-medium h-12">User</TableHead>
+                                <TableHead className="font-medium h-12">Bag</TableHead>
+                                <TableHead className="font-medium h-12">Policy</TableHead>
+                                <TableHead className="font-medium h-12">State</TableHead>
+                                <TableHead className="font-medium h-12">Result</TableHead>
+                                <TableHead className="font-medium h-12">Started</TableHead>
+                                <TableHead className="text-right font-medium h-12">Flags</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {loading ? (
+                            {loading || isFiltering ? (
                                 Array.from({ length: 5 }).map((_, i) => (
                                     <TableRow key={i} className="border-border/50">
                                         <TableCell><Skeleton className="h-4 w-28" /></TableCell>
@@ -150,9 +195,10 @@ export default function SessionsPage() {
                                     return (
                                         <TableRow 
                                             key={s.id} 
-                                            className="border-border/50 transition-colors hover:bg-muted/30 group"
+                                            className="border-border/30 transition-all duration-200 cursor-pointer h-16 group relative"
+                                            onClick={() => { setSelectedSession(s); setDetailsModalOpen(true); }}
                                         >
-                                            <TableCell className="font-medium">
+                                            <TableCell className="font-semibold text-foreground">
                                                 {s.user.name || `+${s.user.phone}`}
                                             </TableCell>
                                             <TableCell className="font-mono text-sm text-muted-foreground">
@@ -209,6 +255,78 @@ export default function SessionsPage() {
                     </CardContent>
                 </Card>
             </motion.div>
+            <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
+                <DialogContent className="sm:max-w-2xl p-0 overflow-hidden border-border/50 shadow-2xl">
+                    <DialogHeader className="px-6 py-5 border-b border-border/30 bg-muted/10">
+                        <DialogTitle className="text-xl font-bold flex items-center justify-between pr-8">
+                            <span>Session Details</span>
+                            {selectedSession && (
+                                <Badge variant={stateConfig[selectedSession.state]?.variant} className={`text-sm py-1 ${stateConfig[selectedSession.state]?.className}`}>
+                                    {selectedSession.state}
+                                </Badge>
+                            )}
+                        </DialogTitle>
+                    </DialogHeader>
+                    
+                    {selectedSession && (
+                        <div className="p-6 space-y-6 bg-background">
+                            <div className="space-y-1 pb-4 border-b border-border/30">
+                                <h3 className="font-bold text-2xl tracking-tight text-foreground">
+                                    {selectedSession.user.name || `+${selectedSession.user.phone}`}
+                                </h3>
+                                <div className="flex items-center gap-3">
+                                    <Badge variant="outline" className="font-mono text-xs bg-muted/30">
+                                        {selectedSession.bag.label}
+                                    </Badge>
+                                    <span className="text-sm text-muted-foreground font-medium">
+                                        Started {formatDate(selectedSession.startedAt)}
+                                    </span>
+                                </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div className="space-y-1.5 p-4 rounded-xl bg-muted/20 border border-border/40 shadow-sm">
+                                    <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Verification Policy</span>
+                                    <div className="font-medium text-lg text-foreground flex items-center gap-2">
+                                        {selectedSession.verificationPolicy === "DEMO_AUTO" ? "🎭 Demo" : "🌾 Pilot MRV"}
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5 p-4 rounded-xl bg-muted/20 border border-border/40 shadow-sm">
+                                    <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Language</span>
+                                    <div className="font-medium text-lg text-foreground uppercase">
+                                        {selectedSession.language || "Not Selected"}
+                                    </div>
+                                </div>
+                                
+                                <div className="space-y-1.5 p-4 rounded-xl bg-muted/20 border border-border/40 shadow-sm">
+                                    <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">System Flags</span>
+                                    <div>
+                                        {selectedSession.timeoutFlag ? (
+                                            <Badge variant="destructive" className="bg-red-500/10 text-red-600 border-red-500/20">TIMEOUT</Badge>
+                                        ) : (
+                                            <span className="text-sm text-muted-foreground">Normal Execution</span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-1.5 p-4 rounded-xl bg-muted/20 border border-border/40 shadow-sm">
+                                    <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Submission Status</span>
+                                    <div className="font-medium text-lg">
+                                        {selectedSession.submission?.verificationStatus ? (
+                                             <span className={
+                                                selectedSession.submission.verificationStatus === "APPROVED" || selectedSession.submission.verificationStatus === "VERIFIED" ? "text-green-600 dark:text-green-400" :
+                                                selectedSession.submission.verificationStatus === "REJECTED" ? "text-red-600 dark:text-red-400" : "text-yellow-600 dark:text-yellow-400"
+                                            }>
+                                                {selectedSession.submission.verificationStatus}
+                                            </span>
+                                        ) : <span className="text-muted-foreground text-sm">No Submission</span>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

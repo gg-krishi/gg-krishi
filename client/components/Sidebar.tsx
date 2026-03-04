@@ -27,10 +27,12 @@ export default function Sidebar() {
     return (
         <aside className="w-64 min-h-screen bg-card border-r border-border flex flex-col transition-colors duration-300">
             {/* Logo Section */}
-            <div className="h-16 flex items-center px-6 border-b border-border/50">
-                <LeafyGreen className="text-primary h-6 w-6 mr-3" />
+            <div className="h-16 flex items-center px-6 border-b border-border/50 group cursor-pointer transition-colors hover:bg-muted/20">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center mr-3 shadow-md group-hover:shadow-green-500/20 group-hover:scale-105 transition-all duration-300">
+                    <LeafyGreen className="text-white h-5 w-5" />
+                </div>
                 <div>
-                    <h1 className="text-lg font-bold bg-gradient-to-br from-primary to-green-400 bg-clip-text text-transparent">
+                    <h1 className="text-xl font-bold tracking-tight text-foreground group-hover:text-green-600 dark:group-hover:text-green-500 transition-colors duration-300">
                         GG Krishi
                     </h1>
                 </div>
@@ -48,7 +50,7 @@ export default function Sidebar() {
                         const Icon = item.icon;
 
                         return (
-                            <Link key={item.href} href={item.href} className="relative group rounded-md outline-none">
+                            <Link key={item.href} href={item.href} className="relative group rounded-md outline-none block">
                                 {isActive && (
                                     <motion.div
                                         layoutId="sidebar-active-indicator"
@@ -58,9 +60,9 @@ export default function Sidebar() {
                                         transition={{ duration: 0.2 }}
                                     />
                                 )}
-                                <div className={`relative flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${isActive ? "text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}>
-                                    <Icon className={`h-4 w-4 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground transition-colors"}`} />
-                                    {item.label}
+                                <div className={`relative flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all duration-200 active:scale-[0.98] ${isActive ? "text-primary font-medium" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"}`}>
+                                    <Icon className={`h-4 w-4 transition-transform duration-200 group-hover:scale-110 ${isActive ? "text-primary" : "text-muted-foreground group-hover:text-foreground"}`} />
+                                    <span className="transition-transform duration-200 group-hover:translate-x-0.5">{item.label}</span>
                                 </div>
                             </Link>
                         );

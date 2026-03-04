@@ -5,7 +5,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: hsl(0, 0%, 100%);
+  --background: hsl(240, 5%, 96%); /* slight gray to pop white cards */
   --foreground: hsl(240, 10%, 10%);
   --card: hsl(0, 0%, 100%);
   --card-foreground: hsl(240, 10%, 10%);
@@ -152,5 +152,24 @@ body {
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Glass effect & Glows inspired by Breyus */
+@layer utilities {
+  .glass {
+    @apply bg-background/80 backdrop-blur-xl border border-border/50;
+  }
+
+  .glass-dark {
+    @apply bg-background/60 backdrop-blur-xl border border-border/30;
+  }
+
+  .glow {
+    box-shadow: 0 0 20px hsl(var(--primary) / 0.15);
+  }
+
+  .glow-sm {
+    box-shadow: 0 0 10px hsl(var(--primary) / 0.1);
   }
 }
