@@ -15,6 +15,89 @@ const WHATSAPP_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "";
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
+// ─── Ticket Context Helpers ─────────────────────────────────────────
+
+function inferTicketDetails(source: string, buttonId: string): { category: string; description: string } {
+    // From gate screen
+    if (source === "gate_screen") {
+        return {
+            category: "general",
+            description: "User requested help from the welcome screen before starting verification"
+        };
+    }
+
+    // From language/name selection
+    if (source === "LANGUAGE_SELECT" || source === "NAME_CONFIRM" || source === "AWAITING_NAME_INPUT") {
+        return {
+            category: "technical_problem",
+            description: `User requested help during ${source === "LANGUAGE_SELECT" ? "language selection" : "name confirmation"}`
+        };
+    }
+
+    // From GPS/photo flow
+    if (source === "AWAITING_GPS") {
+        return {
+            category: "technical_problem",
+            description: "User having trouble sharing location"
+        };
+    }
+    if (source === "AWAITING_PHOTO") {
+        return {
+            category: "technical_problem",
+            description: "User having trouble uploading photo"
+        };
+    }
+    if (source === "PROCESSING") {
+        return {
+            category: "technical_problem",
+            description: "User requested help while submission was being processed"
+        };
+    }
+
+    // From reward screen
+    if (buttonId === "btn_reward_help" || source === "REWARD") {
+        return {
+            category: "payment_issue",
+            description: "User has questions about their reward or payment"
+        };
+    }
+
+    // From review acknowledgment
+    if (source === "REVIEW_ACK") {
+        return {
+            category: "verification_query",
+            description: "User's submission is pending review and they need assistance"
+        };
+    }
+
+    // Completed session
+    if (source === "COMPLETED") {
+        return {
+            category: "general",
+            description: "User requested help after completing verification"
+        };
+    }
+
+    // Default
+    return {
+        category: "general",
+        description: `Help requested from ${source || "unknown context"}`
+    };
+}
+
+function determinePriority(source: string): string {
+    // High priority if stuck in verification flow
+    if (["AWAITING_GPS", "AWAITING_PHOTO", "PROCESSING"].includes(source)) {
+        return "HIGH";
+    }
+    // Medium priority for payment/reward questions
+    if (source === "REWARD" || source === "REVIEW_ACK") {
+        return "MEDIUM";
+    }
+    // Low priority for general help
+    return "LOW";
+}
+
 // ─── Webhook Verification (GET) ─────────────────────────────────────
 router.get("/", (req: Request, res: Response) => {
     const mode = req.query["hub.mode"];
@@ -113,10 +196,64 @@ async function handleButtonReply(
         await sendWhatsAppMessage(phone, "📝 Type your Bag ID below.\n\nExample: GG-P1-2026-03-B00001");
         return;
     }
-    if (buttonId === "btn_need_help") {
-        await logActivity({ event: "HELP_REQUESTED", phone, details: { context: "gate_screen" } });
-        await sendWhatsAppMessage(phone, "📞 Your help request has been logged. Our team will contact you shortly.\n\nIn the meantime, you can scan your bag QR to get started.");
-        await sendGateScreen(phone);
+    if (buttonId === "btn_need_help" || buttonId === "btn_reward_help") {
+        // Capture context for the ticket
+        const source = session ? session.state : "gate_screen";
+        const { category, description } = inferTicketDetails(source, buttonId);
+        const priority = determinePriority(source);
+
+        // Find linked submission if session exists
+        let submissionId: string | null = null;
+        let bagId: string | null = null;
+        if (session) {
+            const submission = await prisma.submission.findUnique({
+                where: { sessionId: session.id },
+                select: { id: true, bagId: true }
+            });
+            submissionId = submission?.id || null;
+            bagId = submission?.bagId || session.bagId || null;
+        }
+
+        await logActivity({
+            event: "HELP_REQUESTED",
+            sessionId: session?.id,
+            phone,
+            details: { context: source, category, submissionId, bagId }
+        });
+
+        // Create ticket with full context
+        const ticket = await prisma.ticket.create({
+            data: {
+                phone,
+                userId: user.id,
+                source,
+                sessionId: session?.id || null,
+                submissionId,
+                bagId,
+                category,
+                description,
+                priority
+            }
+        });
+
+        // Create initial status history record
+        await prisma.ticketStatusChange.create({
+            data: {
+                ticketId: ticket.id,
+                fromStatus: null,
+                toStatus: "OPEN",
+                changedBy: "system"
+            }
+        });
+
+        const ticketId = `GG-TKT-${String(ticket.ticketNumber).padStart(3, "0")}`;
+
+        const lang = session?.language || "en";
+        const msg = lang === "en"
+            ? `We are always here to help! Your customer support ticket is *${ticketId}*\n\nSomeone from the GG Team will be getting in touch with you shortly 🤩\n\n📞 If you need immediate assistance, please call our hotline: 1800-123-4567\n\nThank you for your cooperation 🙏`
+            : `हम आपकी मदद के लिए हमेशा यहाँ हैं! आपका ग्राहक सहायता टिकट *${ticketId}* है\n\nGG टीम से कोई व्यक्ति जल्द ही आपसे संपर्क करेगा 🤩\n\n📞 यदि आपको तत्काल सहायता की आवश्यकता है, तो कृपया हमारे हेल्पलाइन पर कॉल करें: 1800-123-4567\n\nआपके सहयोग के लिए धन्यवाद 🙏`;
+
+        await sendWhatsAppMessage(phone, msg);
         return;
     }
     if (buttonId === "btn_explore_more") {
@@ -137,21 +274,23 @@ async function handleButtonReply(
 
     // Feature list selections → coming soon
     if (buttonId.startsWith("feat_")) {
-        await sendWhatsAppMessage(phone, "🚧 Coming soon! Stay tuned.\n\nScan your bag QR to start verification.");
-        await sendGateScreen(phone);
+        await sendWhatsAppMessage(phone, "🚧 Coming soon! Stay tuned.\n\nWhen you're ready, send your Bag ID to start verification.");
         return;
     }
 
     // ── Session flow buttons ──
 
     if (!session) {
-        await sendGateScreen(phone);
+        await sendNoActiveSessionGuidance(phone, user.language, buttonId);
         return;
     }
 
     // Language selection
     if (buttonId === "lang_en" || buttonId === "lang_hi") {
-        if (session.state !== "LANGUAGE_SELECT") return;
+        if (session.state !== "LANGUAGE_SELECT") {
+            await sendStateGuidance(phone, session);
+            return;
+        }
         const lang = buttonId === "lang_en" ? "en" : "hi";
         await prisma.session.update({ where: { id: session.id }, data: { language: lang, state: "NAME_CONFIRM" } });
         await prisma.user.update({ where: { id: user.id }, data: { language: lang } });
@@ -171,41 +310,30 @@ async function handleButtonReply(
 
     // Name confirmation
     if (buttonId === "name_yes") {
-        if (session.state !== "NAME_CONFIRM") return;
+        if (session.state !== "NAME_CONFIRM") {
+            await sendStateGuidance(phone, session);
+            return;
+        }
         const name = user.name || "Farmer";
         await prisma.session.update({ where: { id: session.id }, data: { userName: name, state: "AWAITING_GPS" } });
         await logActivity({ event: "NAME_CONFIRMED", sessionId: session.id, phone, details: { name, edited: false } });
-        await sendLocationRequest(phone, session.language || "en");
+        await sendLocationRequest(phone, session.language || "en", name);
         return;
     }
     if (buttonId === "name_edit") {
-        if (session.state !== "NAME_CONFIRM") return;
+        if (session.state !== "NAME_CONFIRM") {
+            await sendStateGuidance(phone, session);
+            return;
+        }
+        await prisma.session.update({ where: { id: session.id }, data: { state: "AWAITING_NAME_INPUT" } });
         const msg = (session.language || "en") === "en"
             ? "📝 Please type your name:"
             : "📝 कृपया अपना नाम लिखें:";
         await sendWhatsAppMessage(phone, msg);
-        // State remains NAME_CONFIRM, but next text input = name edit
+        // State is now AWAITING_NAME_INPUT, next text input = name edit
         return;
     }
 
-    // Photo capture
-    if (buttonId === "btn_open_camera") {
-        if (session.state !== "AWAITING_PHOTO") return;
-        const msg = (session.language || "en") === "en"
-            ? "📸 Take a photo now and send it here.\n\nCapture biochar applied on soil. Include soil in frame."
-            : "📸 अभी फोटो लें और यहाँ भेजें।\n\nमिट्टी पर लगाए गए बायोचार की फोटो लें।";
-        await sendWhatsAppMessage(phone, msg);
-        return;
-    }
-    if (buttonId === "btn_photo_help") {
-        if (session.state !== "AWAITING_PHOTO") return;
-        await logActivity({ event: "HELP_REQUESTED", sessionId: session.id, phone, details: { context: "photo_capture" } });
-        const msg = (session.language || "en") === "en"
-            ? "📷 Tips for a good photo:\n\n1. Stand in your field\n2. Point camera at soil where biochar is applied\n3. Make sure biochar (black material) is clearly visible\n4. Take photo in natural daylight\n5. Send directly from camera, not gallery"
-            : "📷 अच्छी फोटो के लिए सुझाव:\n\n1. अपने खेत में खड़े हों\n2. जहाँ बायोचार लगाया है वहाँ कैमरा करें\n3. बायोचार (काला पदार्थ) साफ दिखना चाहिए\n4. दिन की रोशनी में फोटो लें\n5. कैमरे से सीधे भेजें, गैलरी से नहीं";
-        await sendWhatsAppMessage(phone, msg);
-        return;
-    }
 
     // Reward screen buttons
     if (buttonId === "btn_finish") {
@@ -225,11 +353,9 @@ async function handleButtonReply(
         await sendWhatsAppMessage(phone, msg);
         return;
     }
-    if (buttonId === "btn_reward_help") {
-        await logActivity({ event: "HELP_REQUESTED", sessionId: session.id, phone, details: { context: "reward_screen" } });
-        await sendWhatsAppMessage(phone, "📞 Your help request has been logged. Our team will contact you shortly.");
-        return;
-    }
+    // (btn_reward_help is now handled globally at the top of handleButtonReply)
+
+    await sendStateGuidance(phone, session);
 }
 
 // ─── Text Message Handler ────────────────────────────────────────────
@@ -252,13 +378,13 @@ async function handleTextMessage(
         return;
     }
 
-    // If session is in NAME_CONFIRM state, treat text as name edit
-    if (session && session.state === "NAME_CONFIRM") {
+    // If session is in AWAITING_NAME_INPUT state, treat text as name edit
+    if (session && session.state === "AWAITING_NAME_INPUT") {
         const editedName = text.trim().substring(0, 100);
         await prisma.user.update({ where: { id: user.id }, data: { name: editedName } });
         await prisma.session.update({ where: { id: session.id }, data: { userName: editedName, state: "AWAITING_GPS" } });
         await logActivity({ event: "NAME_CONFIRMED", sessionId: session.id, phone, details: { name: editedName, edited: true } });
-        await sendLocationRequest(phone, session.language || "en");
+        await sendLocationRequest(phone, session.language || "en", editedName);
         return;
     }
 
@@ -364,6 +490,7 @@ async function handleBagEntry(
     await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
         { id: "lang_en", title: "English" },
         { id: "lang_hi", title: "हिंदी" },
+        { id: "btn_need_help", title: "❓ Need Help" },
     ]);
 }
 
@@ -406,14 +533,24 @@ async function handleLocation(
     });
 
     const lang = session.language || "en";
-    const msg = lang === "en"
-        ? "✅ Location received!\n\n📸 Step 2: Capture a photo of biochar applied to soil."
-        : "✅ लोकेशन मिल गई!\n\n📸 चरण 2: मिट्टी पर लगाए गए बायोचार की फोटो लें।";
 
-    await sendInteractiveButtons(phone, msg, [
-        { id: "btn_open_camera", title: lang === "en" ? "📷 Open Camera" : "📷 कैमरा खोलें" },
-        { id: "btn_photo_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद चाहिए" },
-    ]);
+    // Use the backend static asset for the reference image
+    const baseUrl = process.env.APP_URL || "http://localhost:3001";
+    const REFERENCE_IMAGE_URL = `${baseUrl}/assets/reference_image.png`;
+
+    // Send reference image with caption
+    const referenceMsg = lang === "en"
+        ? "✅ Location received!\n\n📸 Step 2: Take a photo like this example 👆"
+        : "✅ लोकेशन मिल गई!\n\n📸 चरण 2: इस उदाहरण की तरह फोटो लें 👆";
+
+    await sendMediaMessage(phone, REFERENCE_IMAGE_URL, referenceMsg);
+
+    // Directly ask them to upload (no button needed)
+    const uploadMsg = lang === "en"
+        ? "Tap the 📎 icon below → Choose *Camera* → Take photo\n\n(Or select from *Gallery* if you already have one)"
+        : "नीचे 📎 आइकन टैप करें → *कैमरा* चुनें → फोटो लें\n\n(या *गैलरी* से चुनें यदि पहले से है)";
+
+    await sendWhatsAppMessage(phone, uploadMsg);
 }
 
 // ─── Image Handler ───────────────────────────────────────────────────
@@ -610,7 +747,7 @@ async function handleImage(
                 { id: "btn_finish", title: lang === "en" ? "👋 OK" : "👋 ठीक" },
                 { id: "btn_reward_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद" },
             ]);
-            await prisma.session.update({ where: { id: session.id }, data: { state: "COMPLETED", completedAt: new Date() } });
+            await prisma.session.update({ where: { id: session.id }, data: { state: "REVIEW_ACK" } });
         }
 
     } catch (err) {
@@ -659,15 +796,12 @@ async function sendStateGuidance(phone: string, session: SessionData): Promise<v
     const lang = session.language || "en";
 
     if (session.state === "AWAITING_GPS") {
-        await sendLocationRequest(phone, lang);
+        await sendLocationRequest(phone, lang, session.userName || "Farmer");
     } else if (session.state === "AWAITING_PHOTO") {
         const msg = lang === "en"
-            ? "📸 Please send a photo of biochar applied on soil."
-            : "📸 कृपया मिट्टी पर लगाए गए बायोचार की फोटो भेजें।";
-        await sendInteractiveButtons(phone, msg, [
-            { id: "btn_open_camera", title: lang === "en" ? "📷 Open Camera" : "📷 कैमरा खोलें" },
-            { id: "btn_photo_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद" },
-        ]);
+            ? "📸 Please tap the 📎 icon below to send a photo of biochar applied on soil.\n\nChoose *Camera* to take a new photo, or *Gallery* to select an existing one."
+            : "📸 कृपया नीचे 📎 आइकन टैप करें और मिट्टी पर लगाए गए बायोचार की फोटो भेजें।\n\n*कैमरा* चुनें नई फोटो लेने के लिए, या *गैलरी* से पहले से ली गई फोटो चुनें।";
+        await sendWhatsAppMessage(phone, msg);
     } else if (session.state === "LANGUAGE_SELECT") {
         await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
             { id: "lang_en", title: "English" },
@@ -679,16 +813,90 @@ async function sendStateGuidance(phone: string, session: SessionData): Promise<v
             { id: "name_yes", title: "✅ Yes" },
             { id: "name_edit", title: "✏️ Edit" },
         ]);
+    } else if (session.state === "AWAITING_NAME_INPUT") {
+        const msg = lang === "en"
+            ? "📝 Please type your name:"
+            : "📝 कृपया अपना नाम लिखें:";
+        await sendWhatsAppMessage(phone, msg);
+    } else if (session.state === "REWARD") {
+        await sendRewardScreen(phone, session, lang);
+    } else if (session.state === "REVIEW_ACK") {
+        const msg = lang === "en"
+            ? "⏳ Your submission is under review.\n\nOur team will verify and notify you once it's approved. Thank you for your patience!"
+            : "⏳ आपका सबमिशन समीक्षा में है।\n\nहमारी टीम जाँच करके आपको सूचित करेगी। धन्यवाद!";
+        await sendInteractiveButtons(phone, msg, [
+            { id: "btn_finish", title: lang === "en" ? "👋 OK" : "👋 ठीक" },
+            { id: "btn_reward_help", title: lang === "en" ? "❓ Need Help" : "❓ मदद" },
+        ]);
+    } else if (session.state === "PROCESSING") {
+        const msg = lang === "en"
+            ? "⏳ We are still analyzing your submission. Please wait a moment and avoid resending the same photo."
+            : "⏳ हम अभी आपका सबमिशन जाँच रहे हैं। कृपया थोड़ा इंतज़ार करें और वही फोटो दोबारा न भेजें।";
+        await sendWhatsAppMessage(phone, msg);
+    } else if (session.state === "COMPLETED") {
+        const msg = lang === "en"
+            ? "✅ This verification is already completed.\n\nYou can start a new one any time by sending your Bag ID."
+            : "✅ यह सत्यापन पहले ही पूरा हो चुका है।\n\nआप किसी भी समय Bag ID भेजकर नया सत्यापन शुरू कर सकते हैं।";
+        await sendWhatsAppMessage(phone, msg);
     }
+}
+
+async function sendNoActiveSessionGuidance(phone: string, lang: string, buttonId: string): Promise<void> {
+    const isHindi = lang === "hi";
+
+    if (buttonId === "btn_withdrawal") {
+        const msg = isHindi
+            ? "✅ आपकी निकासी अनुरोध पहले ही दर्ज की जा चुकी है या सत्र समाप्त हो चुका है।\n\nटीम आपसे संपर्क करेगी।"
+            : "✅ Your withdrawal request is already logged, or this session has ended.\n\nOur team will contact you.";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+
+    if (buttonId === "btn_finish") {
+        const msg = isHindi
+            ? "✅ यह सत्र पहले ही पूरा हो चुका है।\n\nनया सत्यापन शुरू करने के लिए Bag ID भेजें।"
+            : "✅ This session is already completed.\n\nSend your Bag ID to start a new verification.";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+
+    const sessionButtons = new Set(["lang_en", "lang_hi", "name_yes", "name_edit"]);
+    if (sessionButtons.has(buttonId)) {
+        const msg = isHindi
+            ? "ℹ️ यह बटन पुराने सत्र का है जो अब सक्रिय नहीं है।\n\nनया सत्यापन शुरू करने के लिए Bag ID भेजें।"
+            : "ℹ️ This button is from an older session that is no longer active.\n\nSend your Bag ID to start a new verification.";
+        await sendWhatsAppMessage(phone, msg);
+        return;
+    }
+
+    const fallback = isHindi
+        ? "ℹ️ अभी कोई सक्रिय सत्यापन सत्र नहीं मिला।\n\nकृपया Bag ID भेजकर नया सत्यापन शुरू करें।"
+        : "ℹ️ No active verification session was found.\n\nPlease send your Bag ID to start a new verification.";
+    await sendWhatsAppMessage(phone, fallback);
 }
 
 // ─── Location Request ────────────────────────────────────────────────
 
-async function sendLocationRequest(phone: string, lang: string): Promise<void> {
+async function sendLocationRequest(phone: string, lang: string, userName: string): Promise<void> {
     const msg = lang === "en"
-        ? "📍 Share your current field location.\n\nTap 📎 → Location → Send Current Location"
-        : "📍 अपना मौजूदा खेत का स्थान साझा करें।\n\n📎 → Location → Send Current Location दबाएं";
-    await sendWhatsAppMessage(phone, msg);
+        ? `Hi ${userName}! Let's now verify your GG Biochar in 3 simple steps 😃\n\nStep 1:\nSend your current field location`
+        : `नमस्ते ${userName}! आइए अब 3 आसान चरणों में आपके GG बायोचार को सत्यापित करें 😃\n\nचरण 1:\nअपना वर्तमान खेत का स्थान भेजें`;
+
+    if (!WHATSAPP_API_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        console.log(`📱 [MOCK LOCATION MSG] To ${phone}: ${msg}`);
+        return;
+    }
+
+    await graphApiPost({
+        messaging_product: "whatsapp",
+        to: phone,
+        type: "interactive",
+        interactive: {
+            type: "location_request_message",
+            body: { text: msg },
+            action: { name: "send_location" },
+        },
+    });
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -851,6 +1059,26 @@ async function sendInteractiveList(
                 ],
             },
         },
+    });
+}
+
+export async function sendMediaMessage(
+    to: string,
+    mediaUrl: string,
+    caption: string
+): Promise<void> {
+    if (!WHATSAPP_API_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+        console.log(`📱 [MOCK MEDIA] To ${to}: ${caption}`);
+        return;
+    }
+    await graphApiPost({
+        messaging_product: "whatsapp",
+        to,
+        type: "image",
+        image: {
+            link: mediaUrl,
+            caption
+        }
     });
 }
 

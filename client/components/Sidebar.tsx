@@ -9,7 +9,8 @@ import {
   CalendarDays, 
   FileText, 
   ScrollText, 
-  LeafyGreen 
+  LeafyGreen,
+  HeadphonesIcon
 } from "lucide-react";
 
 // Using Lucide icons for a cohesive premium look, overriding the old emojis
@@ -19,6 +20,7 @@ const navItems = [
     { href: "/sessions", label: "Sessions", icon: CalendarDays },
     { href: "/submissions", label: "Submissions", icon: FileText },
     { href: "/logs", label: "Logs", icon: ScrollText },
+    { href: "/support", label: "Support", icon: HeadphonesIcon },
 ];
 
 export default function Sidebar() {

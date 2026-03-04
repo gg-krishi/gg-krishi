@@ -18,6 +18,10 @@ app.use(express.json());
 // ─── WhatsApp Webhook ────────────────────────────────────────────────
 app.use("/api/whatsapp/webhook", whatsappRouter);
 
+// ─── Static Files ────────────────────────────────────────────────────
+import * as path from "path";
+app.use("/assets", express.static(path.join(__dirname, "../src")));
+
 // ─── Bag CRUD ────────────────────────────────────────────────────────
 
 // Create new bag
@@ -155,14 +159,57 @@ app.get("/api/users", async (_req, res) => {
     }
 });
 
+// Get single user with sessions and submissions
+app.get("/api/users/:id", async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.params.id },
+            include: {
+                sessions: {
+                    orderBy: { startedAt: "desc" },
+                    select: {
+                        id: true,
+                        state: true,
+                        verificationPolicy: true,
+                        startedAt: true,
+                        completedAt: true,
+                        bag: { select: { label: true } },
+                        submission: { select: { verificationStatus: true } },
+                    },
+                },
+                submissions: {
+                    orderBy: { createdAt: "desc" },
+                    select: {
+                        id: true,
+                        verificationStatus: true,
+                        createdAt: true,
+                        aiConfidence: true,
+                        bag: { select: { label: true } },
+                    },
+                },
+                _count: { select: { sessions: true, submissions: true } },
+            },
+        });
+        if (!user) {
+            res.status(404).json({ error: "User not found" });
+            return;
+        }
+        res.json(user);
+    } catch (err) {
+        console.error("Get user error:", err);
+        res.status(500).json({ error: "Failed to fetch user" });
+    }
+});
+
 // ─── Sessions ────────────────────────────────────────────────────────
 
 app.get("/api/sessions", async (req, res) => {
     try {
-        const { policy, state } = req.query;
+        const { policy, state, userId } = req.query;
         const where: Record<string, unknown> = {};
         if (policy) where.verificationPolicy = policy;
         if (state) where.state = state;
+        if (userId) where.userId = userId;
 
         const sessions = await prisma.session.findMany({
             where,
@@ -180,14 +227,37 @@ app.get("/api/sessions", async (req, res) => {
     }
 });
 
+// Get single session
+app.get("/api/sessions/:id", async (req, res) => {
+    try {
+        const session = await prisma.session.findUnique({
+            where: { id: req.params.id },
+            include: {
+                user: { select: { phone: true, name: true } },
+                bag: { select: { label: true, batchId: true } },
+                submission: { select: { verificationStatus: true } },
+            },
+        });
+        if (!session) {
+            res.status(404).json({ error: "Session not found" });
+            return;
+        }
+        res.json(session);
+    } catch (err) {
+        console.error("Get session error:", err);
+        res.status(500).json({ error: "Failed to fetch session" });
+    }
+});
+
 // ─── Submissions (replaces /api/history) ─────────────────────────────
 
 app.get("/api/submissions", async (req, res) => {
     try {
-        const { status, policy } = req.query;
+        const { status, policy, userId } = req.query;
         const where: Record<string, unknown> = {};
         if (status) where.verificationStatus = status;
         if (policy) where.verificationPolicy = policy;
+        if (userId) where.userId = userId;
 
         const submissions = await prisma.submission.findMany({
             where,
@@ -202,6 +272,28 @@ app.get("/api/submissions", async (req, res) => {
     } catch (err) {
         console.error("Submissions error:", err);
         res.status(500).json({ error: "Failed to fetch submissions" });
+    }
+});
+
+// Get single submission
+app.get("/api/submissions/:id", async (req, res) => {
+    try {
+        const submission = await prisma.submission.findUnique({
+            where: { id: req.params.id },
+            include: {
+                user: { select: { phone: true, name: true } },
+                bag: { select: { label: true, batchId: true } },
+                session: { select: { verificationPolicy: true, language: true } },
+            },
+        });
+        if (!submission) {
+            res.status(404).json({ error: "Submission not found" });
+            return;
+        }
+        res.json(submission);
+    } catch (err) {
+        console.error("Get submission error:", err);
+        res.status(500).json({ error: "Failed to fetch submission" });
     }
 });
 
@@ -396,6 +488,234 @@ app.get("/api/help-requests", async (_req, res) => {
     }
 });
 
+// ─── Tickets ─────────────────────────────────────────────────────────
+
+// List all tickets with context
+app.get("/api/tickets", async (_req, res) => {
+    try {
+        const tickets = await prisma.ticket.findMany({
+            orderBy: { createdAt: "desc" },
+            include: {
+                user: { select: { phone: true, name: true, language: true } },
+                session: {
+                    select: {
+                        state: true,
+                        verificationPolicy: true,
+                        bag: { select: { label: true } }
+                    }
+                },
+                submission: {
+                    select: {
+                        verificationStatus: true,
+                        bag: { select: { label: true } }
+                    }
+                },
+                bag: { select: { label: true } },
+                _count: { select: { notes: true, statusHistory: true } }
+            },
+        });
+        res.json(tickets);
+    } catch (err) {
+        console.error("Tickets error:", err);
+        res.status(500).json({ error: "Failed to fetch tickets" });
+    }
+});
+
+// Get single ticket with full details
+app.get("/api/tickets/:id", async (req, res) => {
+    try {
+        const ticket = await prisma.ticket.findUnique({
+            where: { id: req.params.id },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        phone: true,
+                        name: true,
+                        language: true,
+                        createdAt: true,
+                        _count: { select: { submissions: true, tickets: true } }
+                    }
+                },
+                session: {
+                    select: {
+                        id: true,
+                        state: true,
+                        verificationPolicy: true,
+                        startedAt: true,
+                        bag: { select: { label: true, batchId: true } }
+                    }
+                },
+                submission: {
+                    select: {
+                        id: true,
+                        verificationStatus: true,
+                        latitude: true,
+                        longitude: true,
+                        mediaUrl: true,
+                        aiConfidence: true,
+                        fraudScore: true,
+                        createdAt: true,
+                        bag: { select: { label: true } }
+                    }
+                },
+                bag: { select: { label: true, batchId: true, status: true } },
+                notes: { orderBy: { createdAt: "desc" } },
+                statusHistory: { orderBy: { changedAt: "desc" } }
+            }
+        });
+
+        if (!ticket) {
+            res.status(404).json({ error: "Ticket not found" });
+            return;
+        }
+
+        // Fetch user's submission history (last 10)
+        const userSubmissions = ticket.userId ? await prisma.submission.findMany({
+            where: { userId: ticket.userId },
+            orderBy: { createdAt: "desc" },
+            take: 10,
+            select: {
+                id: true,
+                verificationStatus: true,
+                createdAt: true,
+                bag: { select: { label: true } },
+                aiConfidence: true
+            }
+        }) : [];
+
+        // Fetch user's previous tickets (last 5, excluding current)
+        const previousTickets = ticket.userId ? await prisma.ticket.findMany({
+            where: {
+                userId: ticket.userId,
+                id: { not: ticket.id }
+            },
+            orderBy: { createdAt: "desc" },
+            take: 5,
+            select: {
+                id: true,
+                ticketNumber: true,
+                status: true,
+                category: true,
+                description: true,
+                createdAt: true,
+                resolvedAt: true
+            }
+        }) : [];
+
+        res.json({
+            ...ticket,
+            userSubmissions,
+            previousTickets
+        });
+    } catch (err) {
+        console.error("Get ticket error:", err);
+        res.status(500).json({ error: "Failed to fetch ticket" });
+    }
+});
+
+// Update ticket status
+app.post("/api/tickets/:id/status", async (req, res) => {
+    try {
+        const { status } = req.body;
+
+        if (!["OPEN", "IN_PROGRESS", "RESOLVED"].includes(status)) {
+            res.status(400).json({ error: "Invalid status" });
+            return;
+        }
+
+        const current = await prisma.ticket.findUnique({ where: { id: req.params.id } });
+        if (!current) {
+            res.status(404).json({ error: "Ticket not found" });
+            return;
+        }
+
+        const updateData: { status: string; resolvedAt?: Date } = { status };
+        if (status === "RESOLVED") {
+            updateData.resolvedAt = new Date();
+        }
+
+        const [ticket] = await prisma.$transaction([
+            prisma.ticket.update({
+                where: { id: req.params.id },
+                data: updateData,
+            }),
+            prisma.ticketStatusChange.create({
+                data: {
+                    ticketId: req.params.id,
+                    fromStatus: current.status,
+                    toStatus: status,
+                    changedBy: "agent"
+                }
+            })
+        ]);
+
+        res.json(ticket);
+    } catch (err) {
+        console.error("Update ticket status error:", err);
+        res.status(500).json({ error: "Failed to update ticket status" });
+    }
+});
+
+// Add note to ticket
+app.post("/api/tickets/:id/notes", async (req, res) => {
+    try {
+        const { content, createdBy } = req.body;
+
+        if (!content || content.trim().length === 0) {
+            res.status(400).json({ error: "Note content is required" });
+            return;
+        }
+
+        const note = await prisma.ticketNote.create({
+            data: {
+                ticketId: req.params.id,
+                content: content.trim(),
+                createdBy: createdBy || "agent"
+            }
+        });
+
+        res.json(note);
+    } catch (err) {
+        console.error("Add note error:", err);
+        res.status(500).json({ error: "Failed to add note" });
+    }
+});
+
+// Resolve ticket (enhanced with status history)
+app.post("/api/tickets/:id/resolve", async (req, res) => {
+    try {
+        const current = await prisma.ticket.findUnique({ where: { id: req.params.id } });
+        if (!current) {
+            res.status(404).json({ error: "Ticket not found" });
+            return;
+        }
+
+        const [ticket] = await prisma.$transaction([
+            prisma.ticket.update({
+                where: { id: req.params.id },
+                data: {
+                    status: "RESOLVED",
+                    resolvedAt: new Date()
+                },
+            }),
+            prisma.ticketStatusChange.create({
+                data: {
+                    ticketId: req.params.id,
+                    fromStatus: current.status,
+                    toStatus: "RESOLVED",
+                    changedBy: "agent"
+                }
+            })
+        ]);
+
+        res.json(ticket);
+    } catch (err) {
+        console.error("Resolve ticket error:", err);
+        res.status(500).json({ error: "Failed to resolve ticket" });
+    }
+});
+
 // ─── Activity Logs ───────────────────────────────────────────────────
 
 app.get("/api/logs", async (req, res) => {
@@ -431,5 +751,6 @@ app.listen(PORT, () => {
     console.log(`👥 Users API: http://localhost:${PORT}/api/users`);
     console.log(`📋 Sessions API: http://localhost:${PORT}/api/sessions`);
     console.log(`📄 Submissions API: http://localhost:${PORT}/api/submissions`);
+    console.log(`🎫 Tickets API: http://localhost:${PORT}/api/tickets`);
     console.log(`📜 Logs API: http://localhost:${PORT}/api/logs\n`);
 });

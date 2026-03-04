@@ -16,6 +16,7 @@ model User {
   bags        Bag[]
   sessions    Session[]
   submissions Submission[]
+  tickets     Ticket[]
 }
 
 model Bag {
@@ -29,6 +30,7 @@ model Bag {
   sessions       Session[]
   submissions    Submission[]
   logs           ActivityLog[]
+  tickets        Ticket[]
 }
 
 model Session {
@@ -47,6 +49,7 @@ model Session {
   bag                Bag         @relation(fields: [bagId], references: [bagId])
   submission         Submission?
   logs               ActivityLog[]
+  tickets            Ticket[]
 }
 
 model Submission {
@@ -72,6 +75,7 @@ model Submission {
   user               User     @relation(fields: [userId], references: [id])
   bag                Bag      @relation(fields: [bagId], references: [bagId])
   logs               ActivityLog[]
+  tickets            Ticket[]
 }
 
 model ActivityLog {
@@ -87,4 +91,61 @@ model ActivityLog {
   bag          Bag?        @relation(fields: [bagId], references: [bagId])
   session      Session?    @relation(fields: [sessionId], references: [id])
   submission   Submission? @relation(fields: [submissionId], references: [id])
+}
+
+model Ticket {
+  id                 String               @id @default(uuid())
+  ticketNumber       Int                  @default(autoincrement())
+  phone              String
+  status             String               @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED
+  createdAt          DateTime             @default(now())
+  resolvedAt         DateTime?
+  user               User?                @relation(fields: [userId], references: [id])
+  userId             String?
+
+  // Context capture fields
+  source             String?              // gate_screen | LANGUAGE_SELECT | AWAITING_GPS | REWARD | etc.
+  sessionId          String?
+  session            Session?             @relation(fields: [sessionId], references: [id])
+  submissionId       String?
+  submission         Submission?          @relation(fields: [submissionId], references: [id])
+  bagId              String?
+  bag                Bag?                 @relation(fields: [bagId], references: [bagId])
+
+  // Categorization
+  category           String?              // general | technical_problem | payment_issue | verification_query
+  description        String?
+  priority           String               @default("MEDIUM") // LOW | MEDIUM | HIGH
+
+  // Relations
+  notes              TicketNote[]
+  statusHistory      TicketStatusChange[]
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([status])
+}
+
+model TicketNote {
+  id        String   @id @default(uuid())
+  ticketId  String
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  @@index([ticketId])
+}
+
+model TicketStatusChange {
+  id         String   @id @default(uuid())
+  ticketId   String
+  ticket     Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  changedAt  DateTime @default(now())
+  changedBy  String?
+  note       String?
+
+  @@index([ticketId])
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { FileText, Download, Check, X, Image as ImageIcon, MapPin, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
+import { FileText, Download, Check, X, Image as ImageIcon, MapPin, CheckCircle, AlertTriangle, XCircle, User } from "lucide-react";
 import { 
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow 
 } from "@/components/ui/table";
@@ -48,11 +49,16 @@ const statusConfig: Record<string, { variant: "default" | "secondary" | "destruc
 };
 
 export default function SubmissionsPage() {
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const userIdFilter = searchParams.get("userId");
+
     const [subs, setSubs] = useState<Submission[]>([]);
     const [loading, setLoading] = useState(true);
     const [isFiltering, setIsFiltering] = useState(false);
     const [filter, setFilter] = useState<string>("");
-    
+    const [filterUserPhone, setFilterUserPhone] = useState<string | null>(null);
+
     // Details Modal State
     const [detailsModalOpen, setDetailsModalOpen] = useState(false);
     const [selectedSub, setSelectedSub] = useState<Submission | null>(null);
@@ -61,20 +67,33 @@ export default function SubmissionsPage() {
     // Action loading states
     const [actionLoading, setActionLoading] = useState<Record<string, 'approve' | 'reject' | null>>({});
 
+    const clearUserFilter = () => {
+        router.push("/submissions");
+    };
+
     const fetchSubs = useCallback(async (showLoading = false) => {
         if (showLoading) setIsFiltering(true);
         try {
-            const url = filter ? `${API}/api/submissions?status=${filter}` : `${API}/api/submissions`;
+            const params = new URLSearchParams();
+            if (filter) params.append("status", filter);
+            if (userIdFilter) params.append("userId", userIdFilter);
+            const url = `${API}/api/submissions${params.toString() ? `?${params}` : ""}`;
             const res = await fetch(url);
             const data = await res.json();
             setSubs(Array.isArray(data) ? data : []);
-        } catch (err) { 
-            console.error("Failed to fetch submissions:", err); 
-        } finally { 
-            setLoading(false); 
+            // Set the user phone for display if filtering by user
+            if (userIdFilter && Array.isArray(data) && data.length > 0) {
+                setFilterUserPhone(data[0].user?.phone || null);
+            } else if (!userIdFilter) {
+                setFilterUserPhone(null);
+            }
+        } catch (err) {
+            console.error("Failed to fetch submissions:", err);
+        } finally {
+            setLoading(false);
             setIsFiltering(false);
         }
-    }, [filter]);
+    }, [filter, userIdFilter]);
 
     useEffect(() => { 
         fetchSubs(true); 
@@ -125,15 +144,31 @@ export default function SubmissionsPage() {
                 </div>
                 
                 <div className="flex flex-wrap items-center gap-3">
+                    {userIdFilter && (
+                        <div className="flex items-center gap-2 bg-blue-500/10 text-blue-600 px-3 py-1.5 rounded-lg border border-blue-500/30">
+                            <User className="h-4 w-4" />
+                            <span className="text-sm font-medium">
+                                Filtering by user: {filterUserPhone ? `+${filterUserPhone}` : "..."}
+                            </span>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={clearUserFilter}
+                                className="h-5 w-5 p-0 hover:bg-blue-500/20 rounded-full"
+                            >
+                                <X className="h-3 w-3" />
+                            </Button>
+                        </div>
+                    )}
                     <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-lg border">
                         {[{ id: "", label: "All" }, { id: "VERIFIED", label: "Verified" }, { id: "PENDING_REVIEW", label: "Review" }, { id: "REJECTED", label: "Rejected" }].map((f) => (
-                            <Button 
-                                key={f.id} 
+                            <Button
+                                key={f.id}
                                 variant={filter === f.id ? "default" : "ghost"}
                                 size="sm"
                                 onClick={() => setFilter(f.id)}
                                 className={`h-8 rounded-md px-3 text-xs font-medium transition-colors ${
-                                    filter === f.id 
+                                    filter === f.id
                                         ? f.id === "VERIFIED" ? "bg-green-600 hover:bg-green-700 shadow-sm" : f.id === "REJECTED" ? "bg-red-600 hover:bg-red-700 shadow-sm" : f.id === "PENDING_REVIEW" ? "bg-orange-500 hover:bg-orange-600 shadow-sm" : "shadow-sm"
                                         : ""
                                 }`}
@@ -142,7 +177,7 @@ export default function SubmissionsPage() {
                             </Button>
                         ))}
                     </div>
-                    
+
                     <Button onClick={exportCSV} variant="outline" className="h-10 border-blue-500/30 text-blue-600 hover:text-blue-700 hover:bg-blue-500/10 transition-colors shadow-sm">
                         <Download className="h-4 w-4 mr-2" />
                         Export CSV
