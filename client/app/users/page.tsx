@@ -424,7 +424,7 @@ export default function UsersPage() {
                         <TabsList className="w-full grid grid-cols-3 px-6 bg-muted/30 shrink-0">
                             <TabsTrigger value="info">User Info</TabsTrigger>
                             <TabsTrigger value="sessions">Sessions ({userDetail?._count?.sessions ?? selectedUser?._count?.sessions ?? 0})</TabsTrigger>
-                            <TabsTrigger value="submissions">Submissions ({userDetail?._count?.submissions ?? selectedUser?._count?.submissions ?? 0})</TabsTrigger>
+                            <TabsTrigger value="submissions"><span className="sm:hidden">Subs ({userDetail?._count?.submissions ?? selectedUser?._count?.submissions ?? 0})</span><span className="hidden sm:inline">Submissions ({userDetail?._count?.submissions ?? selectedUser?._count?.submissions ?? 0})</span></TabsTrigger>
                         </TabsList>
 
                         {/* User Info Tab */}
@@ -479,9 +479,9 @@ export default function UsersPage() {
 
                         {/* Sessions Tab with Master-Detail */}
                         <TabsContent value="sessions" className="mt-0 flex-1 overflow-hidden">
-                            <div className="flex h-[calc(85vh-180px)]">
+                            <div className="flex h-[calc(90dvh-180px)]">
                                 {/* Sessions List (Master) */}
-                                <div className={`${hasItemSelected ? 'w-2/5 border-r border-border/30' : 'w-full'} transition-all duration-300`}>
+                                <div className={`${hasItemSelected ? 'hidden sm:flex sm:flex-col sm:w-2/5 border-r border-border/30' : 'w-full'} transition-all duration-300`}>
                                     <ScrollArea className="h-full">
                                         <div className="p-4 space-y-2">
                                             {detailLoading ? (
@@ -547,7 +547,7 @@ export default function UsersPage() {
 
                                 {/* Session Detail (Detail) */}
                                 {selectedSessionId && (
-                                    <div className="w-3/5 bg-muted/5">
+                                    <div className="flex-1 sm:w-3/5 w-full bg-muted/5">
                                         <ScrollArea className="h-full">
                                             <div className="p-6">
                                                 <Button
@@ -636,9 +636,9 @@ export default function UsersPage() {
 
                         {/* Submissions Tab with Master-Detail */}
                         <TabsContent value="submissions" className="mt-0 flex-1 overflow-hidden">
-                            <div className="flex h-[calc(85vh-180px)]">
+                            <div className="flex h-[calc(90dvh-180px)]">
                                 {/* Submissions List (Master) */}
-                                <div className={`${hasItemSelected ? 'w-2/5 border-r border-border/30' : 'w-full'} transition-all duration-300`}>
+                                <div className={`${hasItemSelected ? 'hidden sm:flex sm:flex-col sm:w-2/5 border-r border-border/30' : 'w-full'} transition-all duration-300`}>
                                     <ScrollArea className="h-full">
                                         <div className="p-4 space-y-2">
                                             {detailLoading ? (
@@ -702,7 +702,7 @@ export default function UsersPage() {
 
                                 {/* Submission Detail (Detail) */}
                                 {selectedSubmissionId && (
-                                    <div className="w-3/5 bg-muted/5">
+                                    <div className="flex-1 sm:w-3/5 w-full bg-muted/5">
                                         <ScrollArea className="h-full">
                                             <div className="p-6">
                                                 <Button

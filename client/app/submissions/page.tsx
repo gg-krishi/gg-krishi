@@ -367,11 +367,11 @@ function SubmissionsContent() {
                     </DialogHeader>
                     <div className="flex flex-col md:flex-row flex-1 overflow-auto bg-background">
                         {/* Image */}
-                        <div className="md:w-1/2 p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center relative min-h-[220px]">
+                        <div className="md:w-1/2 p-4 md:p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center relative min-h-[160px] md:min-h-[220px]">
                             {selectedSub?.mediaUrl ? (
                                 <>
                                     {imageLoading && <div className="absolute inset-x-6 inset-y-6 flex items-center justify-center z-10"><Skeleton className="w-full h-full rounded-2xl" /></div>}
-                                    <img src={`${API}/api/submissions/${selectedSub.id}/image`} alt="Verification" className={`w-full max-h-[50vh] object-contain rounded-xl transition-opacity duration-500 shadow-md ${imageLoading ? "opacity-0" : "opacity-100"}`} onLoad={() => setImageLoading(false)} />
+                                    <img src={`${API}/api/submissions/${selectedSub.id}/image`} alt="Verification" className={`w-full max-h-[35vh] md:max-h-[50vh] object-contain rounded-xl transition-opacity duration-500 shadow-md ${imageLoading ? "opacity-0" : "opacity-100"}`} onLoad={() => setImageLoading(false)} />
                                 </>
                             ) : (
                                 <div className="text-muted-foreground flex flex-col items-center justify-center opacity-50">

@@ -378,7 +378,7 @@ export default function BagsPage() {
 
             {/* ── Bag Details Modal (unchanged from before) ── */}
             <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>
-                <DialogContent className="w-[calc(100%-2rem)] sm:max-w-3xl p-0 overflow-hidden border-border/50 shadow-2xl xl:max-w-4xl">
+                <DialogContent className="w-[calc(100%-2rem)] sm:max-w-3xl p-0 overflow-hidden border-border/50 shadow-2xl xl:max-w-4xl max-h-[90dvh] flex flex-col">
                     <DialogHeader className="px-6 py-5 border-b border-border/30 bg-muted/10">
                         <DialogTitle className="text-xl font-bold flex items-center justify-between pr-8">
                             <span>Bag Details</span>
@@ -391,11 +391,11 @@ export default function BagsPage() {
                     </DialogHeader>
 
                     {selectedBag && (
-                        <div className="flex flex-col md:flex-row bg-background max-h-[80vh] overflow-y-auto">
+                        <div className="flex flex-col md:flex-row bg-background flex-1 overflow-y-auto">
                             {/* QR Section */}
-                            <div className="md:w-[45%] p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center">
+                            <div className="md:w-[45%] p-4 md:p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center">
                                 <h4 className="text-sm font-semibold text-muted-foreground mb-4">Scan with WhatsApp</h4>
-                                <div className="bg-white p-4 rounded-2xl shadow-sm border border-border/50 w-56 h-56 flex items-center justify-center">
+                                <div className="bg-white p-4 rounded-2xl shadow-sm border border-border/50 w-44 h-44 sm:w-56 sm:h-56 flex items-center justify-center">
                                     {qrLoading ? (
                                         <Skeleton className="w-full h-full rounded-xl" />
                                     ) : qrSvg ? (
