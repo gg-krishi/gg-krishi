@@ -538,19 +538,12 @@ async function handleLocation(
     const baseUrl = process.env.APP_URL || "http://localhost:3001";
     const REFERENCE_IMAGE_URL = `${baseUrl}/assets/reference_image.png`;
 
-    // Send reference image with caption
+    // Send reference image with full instructions in caption (single message — no ordering issues)
     const referenceMsg = lang === "en"
-        ? "✅ Location received!\n\n📸 Step 2: Take a photo like this example 👆"
-        : "✅ लोकेशन मिल गई!\n\n📸 चरण 2: इस उदाहरण की तरह फोटो लें 👆";
+        ? "✅ Location received!\n\n📸 *Step 2: Take a photo like this example* 👆\n\nTap the 📎 icon below → Choose *Camera* → Take photo\n\n(Or select from *Gallery* if you already have one)"
+        : "✅ लोकेशन मिल गई!\n\n📸 *चरण 2: इस उदाहरण की तरह फोटो लें* 👆\n\nनीचे 📎 आइकन टैप करें → *कैमरा* चुनें → फोटो लें\n\n(या *गैलरी* से चुनें यदि पहले से है)";
 
     await sendMediaMessage(phone, REFERENCE_IMAGE_URL, referenceMsg);
-
-    // Directly ask them to upload (no button needed)
-    const uploadMsg = lang === "en"
-        ? "Tap the 📎 icon below → Choose *Camera* → Take photo\n\n(Or select from *Gallery* if you already have one)"
-        : "नीचे 📎 आइकन टैप करें → *कैमरा* चुनें → फोटो लें\n\n(या *गैलरी* से चुनें यदि पहले से है)";
-
-    await sendWhatsAppMessage(phone, uploadMsg);
 }
 
 // ─── Image Handler ───────────────────────────────────────────────────
