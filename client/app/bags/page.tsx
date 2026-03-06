@@ -174,14 +174,14 @@ export default function BagsPage() {
             {/* Stat cards — horizontal scroll on mobile, 3-col grid on desktop */}
             <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
                 {/* Mobile: horizontal scroll */}
-                <div className="flex md:hidden gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-none">
+                <div className="flex md:hidden gap-2">
                     {[
                         { title: "Total", subtitle: "All bags", value: bags.length, iconColor: "text-blue-500", iconBgColor: "bg-blue-500/10" },
                         { title: "Unused", subtitle: "Available", value: unusedCount, iconColor: "text-green-500", iconBgColor: "bg-green-500/10" },
                         { title: "Flagged", subtitle: "Needs review", value: usedCount + bags.filter(b => b.status === "flagged").length, iconColor: "text-orange-500", iconBgColor: "bg-orange-500/10" },
                     ].map((s) => (
-                        <div key={s.title} className="flex-shrink-0 w-[72vw] snap-start">
-                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={Package} iconColor={s.iconColor} iconBgColor={s.iconBgColor} isLoading={loading} />
+                        <div key={s.title} className="flex-1 min-w-0">
+                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={Package} iconColor={s.iconColor} iconBgColor={s.iconBgColor} isLoading={loading} compact />
                         </div>
                     ))}
                 </div>

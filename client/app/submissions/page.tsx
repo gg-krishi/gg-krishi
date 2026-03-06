@@ -175,14 +175,14 @@ function SubmissionsContent() {
             {/* Stat Cards */}
             <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
                 {/* Mobile: horizontal scroll */}
-                <div className="flex md:hidden gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-none">
+                <div className="flex md:hidden gap-2">
                     {[
                         { title: "Total", subtitle: "All submissions", value: subs.length, icon: FileText, iconColor: "text-blue-500" },
                         { title: "Verified", subtitle: "Approved", value: verifiedCount, icon: CheckCircle, iconColor: "text-green-500" },
                         { title: "Review", subtitle: "Needs action", value: pendingReviewCount, icon: AlertTriangle, iconColor: "text-orange-500" },
                     ].map((s) => (
-                        <div key={s.title} className="flex-shrink-0 w-[72vw] snap-start">
-                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={s.icon} iconColor={s.iconColor} isLoading={loading} />
+                        <div key={s.title} className="flex-1 min-w-0">
+                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={s.icon} iconColor={s.iconColor} isLoading={loading} compact />
                         </div>
                     ))}
                 </div>
@@ -365,14 +365,14 @@ function SubmissionsContent() {
                             </div>
                         </DialogTitle>
                     </DialogHeader>
-                    <div className="flex flex-col md:flex-row flex-1 overflow-auto bg-background">
+                    <div className="flex flex-col md:flex-row flex-1 overflow-hidden bg-background">
                         {/* Image */}
-                        <div className="md:w-1/2 p-4 md:p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center relative min-h-[160px] md:min-h-[220px]">
+                        <div className="md:w-1/2 p-4 md:p-6 bg-muted/5 border-b md:border-b-0 md:border-r border-border/30 flex flex-col items-center justify-center overflow-hidden flex-shrink-0 max-h-[30vh] md:max-h-none min-h-[130px] md:min-h-[220px]">
                             {selectedSub?.mediaUrl ? (
-                                <>
-                                    {imageLoading && <div className="absolute inset-x-6 inset-y-6 flex items-center justify-center z-10"><Skeleton className="w-full h-full rounded-2xl" /></div>}
-                                    <img src={`${API}/api/submissions/${selectedSub.id}/image`} alt="Verification" className={`w-full max-h-[35vh] md:max-h-[50vh] object-contain rounded-xl transition-opacity duration-500 shadow-md ${imageLoading ? "opacity-0" : "opacity-100"}`} onLoad={() => setImageLoading(false)} />
-                                </>
+                                <div className="relative w-full flex items-center justify-center">
+                                    {imageLoading && <div className="absolute inset-0 flex items-center justify-center z-10"><Skeleton className="w-full h-32 rounded-2xl" /></div>}
+                                    <img src={`${API}/api/submissions/${selectedSub.id}/image`} alt="Verification" className={`w-full max-h-[28vh] md:max-h-[50vh] object-contain rounded-xl transition-opacity duration-500 shadow-md ${imageLoading ? "opacity-0" : "opacity-100"}`} onLoad={() => setImageLoading(false)} />
+                                </div>
                             ) : (
                                 <div className="text-muted-foreground flex flex-col items-center justify-center opacity-50">
                                     <ImageIcon className="w-16 h-16 mb-4" /><p className="font-medium">No Image Attached</p>
@@ -380,7 +380,7 @@ function SubmissionsContent() {
                             )}
                         </div>
                         {/* Details */}
-                        <div className="md:w-1/2 p-6 overflow-y-auto space-y-6">
+                        <div className="md:w-1/2 p-6 overflow-y-auto space-y-6 flex-1">
                             {selectedSub && (
                                 <>
                                     <div className="space-y-2 pb-4 border-b border-border/30">

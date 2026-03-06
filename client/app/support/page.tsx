@@ -305,14 +305,14 @@ export default function SupportPage() {
             {/* Stat Cards */}
             <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
                 {/* Mobile: horizontal scroll */}
-                <div className="flex md:hidden gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-none">
+                <div className="flex md:hidden gap-2">
                     {[
                         { title: "Total", subtitle: "All tickets", value: allTickets.length, icon: TicketIcon, iconColor: "text-blue-500" },
                         { title: "Active", subtitle: "Needs attention", value: openCount, icon: Clock, iconColor: "text-yellow-500" },
                         { title: "Resolved", subtitle: "Closed", value: resolvedCount, icon: CheckCircle2, iconColor: "text-green-500" },
                     ].map((s) => (
-                        <div key={s.title} className="flex-shrink-0 w-[72vw] snap-start">
-                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={s.icon} iconColor={s.iconColor} isLoading={loading} />
+                        <div key={s.title} className="flex-1 min-w-0">
+                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={s.icon} iconColor={s.iconColor} isLoading={loading} compact />
                         </div>
                     ))}
                 </div>
