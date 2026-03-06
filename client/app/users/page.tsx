@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Users as UsersIcon, UserCheck, Activity, ChevronRight, Clock, ArrowLeft, MapPin, Image as ImageIcon, FileText, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
+import { Users as UsersIcon, UserCheck, Activity, ChevronRight, ChevronLeft, Clock, ArrowLeft, MapPin, Image as ImageIcon, FileText, CheckCircle, XCircle, AlertTriangle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { PremiumStatCard, PremiumStatCardGrid } from "@/components/ui/premium-stat-card";
@@ -105,10 +105,13 @@ const stateConfig: Record<string, { variant: "default" | "secondary" | "destruct
     GATE: { variant: "secondary" },
 };
 
+const PAGE_SIZE = 20;
+
 export default function UsersPage() {
     const router = useRouter();
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
+    const [page, setPage] = useState(1);
 
     const [detailsModalOpen, setDetailsModalOpen] = useState(false);
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -210,54 +213,80 @@ export default function UsersPage() {
 
     const hasItemSelected = selectedSessionId !== null || selectedSubmissionId !== null;
 
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE));
+    const pagedUsers = users.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+    const getPageNums = () => {
+        const nums = new Set([1, totalPages, page, page - 1, page + 1].filter(n => n >= 1 && n <= totalPages));
+        return Array.from(nums).sort((a, b) => a - b);
+    };
+
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-2">
-                <div>
-                    <h1 className="text-3xl font-bold tracking-tight">Users</h1>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                        Manage farmers and their sessions
-                    </p>
+            {/* Sticky Header */}
+            <div className="sticky top-16 z-20 -mx-4 md:-mx-8 px-4 md:px-8 py-3 bg-background/90 backdrop-blur-md border-b border-border/30 mb-2">
+                <div className="min-w-0">
+                    <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Users</h1>
+                    <p className="text-muted-foreground text-xs hidden sm:block">Manage farmers and their sessions</p>
                 </div>
             </div>
 
-            <motion.div
-                initial={{ opacity: 0, y: -20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.4 }}
-            >
-                <PremiumStatCardGrid columns={3}>
-                    <PremiumStatCard
-                        title="Total Users"
-                        subtitle="Registered farmers"
-                        value={users.length}
-                        icon={UsersIcon}
-                        iconColor="text-blue-500"
-                        iconBgColor="bg-blue-500/10"
-                        isLoading={loading}
-                    />
-                    <PremiumStatCard
-                        title="Active Users"
-                        subtitle="Started at least 1 session"
-                        value={activeFarmers}
-                        icon={UserCheck}
-                        iconColor="text-emerald-500"
-                        iconBgColor="bg-emerald-500/10"
-                        isLoading={loading}
-                    />
-                    <PremiumStatCard
-                        title="Total Sessions"
-                        subtitle="All-time sessions created"
-                        value={totalSessions}
-                        icon={Activity}
-                        iconColor="text-purple-500"
-                        iconBgColor="bg-purple-500/10"
-                        isLoading={loading}
-                    />
-                </PremiumStatCardGrid>
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+                {/* Mobile: horizontal scroll */}
+                <div className="flex md:hidden gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory scrollbar-none">
+                    {[
+                        { title: "Total", subtitle: "Registered", value: users.length, icon: UsersIcon, iconColor: "text-blue-500" },
+                        { title: "Active", subtitle: "With sessions", value: activeFarmers, icon: UserCheck, iconColor: "text-emerald-500" },
+                        { title: "Sessions", subtitle: "All-time", value: totalSessions, icon: Activity, iconColor: "text-purple-500" },
+                    ].map((s) => (
+                        <div key={s.title} className="flex-shrink-0 w-[72vw] snap-start">
+                            <PremiumStatCard title={s.title} subtitle={s.subtitle} value={loading ? "—" : s.value} icon={s.icon} iconColor={s.iconColor} isLoading={loading} />
+                        </div>
+                    ))}
+                </div>
+                {/* Desktop: 3-col grid */}
+                <div className="hidden md:block">
+                    <PremiumStatCardGrid columns={3}>
+                        <PremiumStatCard title="Total Users" subtitle="Registered farmers" value={users.length} icon={UsersIcon} iconColor="text-blue-500" iconBgColor="bg-blue-500/10" isLoading={loading} />
+                        <PremiumStatCard title="Active Users" subtitle="Started at least 1 session" value={activeFarmers} icon={UserCheck} iconColor="text-emerald-500" iconBgColor="bg-emerald-500/10" isLoading={loading} />
+                        <PremiumStatCard title="Total Sessions" subtitle="All-time sessions created" value={totalSessions} icon={Activity} iconColor="text-purple-500" iconBgColor="bg-purple-500/10" isLoading={loading} />
+                    </PremiumStatCardGrid>
+                </div>
             </motion.div>
 
+            {/* Mobile Cards */}
+            <motion.div className="md:hidden space-y-3" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.1 }}>
+                {loading ? Array.from({ length: 5 }).map((_, i) => (
+                    <Card key={i} className="border-border/40"><CardContent className="p-4 space-y-2">
+                        <Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-24" />
+                        <div className="flex justify-between"><Skeleton className="h-6 w-20 rounded-full" /><Skeleton className="h-6 w-16 rounded-full" /></div>
+                    </CardContent></Card>
+                )) : pagedUsers.length === 0 ? (
+                    <p className="text-center text-muted-foreground py-10">No users found.</p>
+                ) : pagedUsers.map((u) => (
+                    <Card key={u.id} className="border-border/40 cursor-pointer active:scale-[0.99] transition-transform" onClick={() => { setSelectedUser(u); setDetailsModalOpen(true); fetchUserDetail(u.id); }}>
+                        <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <p className="font-semibold text-sm text-foreground truncate">{u.name || "Anonymous Farmer"}</p>
+                                    <p className="font-mono text-xs text-muted-foreground mt-0.5 truncate">+{u.phone}</p>
+                                </div>
+                                <Badge variant={u.language === "hi" ? "default" : "secondary"} className="text-[10px] uppercase tracking-wider flex-shrink-0">
+                                    {u.language === "hi" ? "हिंदी" : "EN"}
+                                </Badge>
+                            </div>
+                            <div className="mt-2.5 flex items-center justify-between text-xs text-muted-foreground">
+                                <span>{u._count?.sessions || 0} sessions · {u._count?.submissions || 0} submissions</span>
+                                <span>{new Date(u.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                            </div>
+                        </CardContent>
+                    </Card>
+                ))}
+            </motion.div>
+
+            {/* Desktop Table */}
             <motion.div
+                className="hidden md:block"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, delay: 0.1 }}
@@ -296,7 +325,7 @@ export default function UsersPage() {
                                         </TableCell>
                                     </TableRow>
                                 ) : (
-                                    users.map((u) => (
+                                    pagedUsers.map((u) => (
                                         <TableRow
                                             key={u.id}
                                             className="border-border/30 transition-all duration-200 cursor-pointer h-16 group relative"
@@ -342,6 +371,27 @@ export default function UsersPage() {
                     </CardContent>
                 </Card>
             </motion.div>
+
+            {/* Pagination */}
+            {!loading && users.length > PAGE_SIZE && (
+                <div className="flex items-center justify-center gap-1.5 pt-2">
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))}>
+                        <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    {getPageNums().map((num, idx, arr) => (<>
+                        {idx > 0 && arr[idx - 1] !== num - 1 && <span key={`d-${num}`} className="text-muted-foreground text-sm px-1">…</span>}
+                        <Button key={num} variant={page === num ? "default" : "outline"} size="icon" className="h-8 w-8 text-sm font-medium" onClick={() => setPage(num)}>{num}</Button>
+                    </>))}
+                    <Button variant="outline" size="icon" className="h-8 w-8" disabled={page === totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>
+                        <ChevronRight className="h-4 w-4" />
+                    </Button>
+                </div>
+            )}
+            {!loading && users.length > PAGE_SIZE && (
+                <p className="text-center text-xs text-muted-foreground">
+                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, users.length)} of {users.length} users
+                </p>
+            )}
 
             {/* User Profile Dialog with Master-Detail Layout */}
             <Dialog open={detailsModalOpen} onOpenChange={(open) => {
@@ -445,8 +495,8 @@ export default function UsersPage() {
                                                             key={session.id}
                                                             onClick={() => fetchSessionDetail(session.id)}
                                                             className={`p-3 rounded-xl border transition-all cursor-pointer ${selectedSessionId === session.id
-                                                                    ? 'bg-primary/10 border-primary/30'
-                                                                    : 'bg-muted/20 border-border/40 hover:bg-muted/30'
+                                                                ? 'bg-primary/10 border-primary/30'
+                                                                : 'bg-muted/20 border-border/40 hover:bg-muted/30'
                                                                 }`}
                                                         >
                                                             <div className="flex items-center justify-between">
@@ -468,7 +518,7 @@ export default function UsersPage() {
                                                                 </div>
                                                                 {session.submission && (
                                                                     <span className={`text-xs font-medium ${session.submission.verificationStatus === "VERIFIED" ? "text-green-600" :
-                                                                            session.submission.verificationStatus === "REJECTED" ? "text-red-600" : "text-yellow-600"
+                                                                        session.submission.verificationStatus === "REJECTED" ? "text-red-600" : "text-yellow-600"
                                                                         }`}>
                                                                         {session.submission.verificationStatus}
                                                                     </span>
@@ -602,8 +652,8 @@ export default function UsersPage() {
                                                             key={sub.id}
                                                             onClick={() => fetchSubmissionDetail(sub.id)}
                                                             className={`p-3 rounded-xl border transition-all cursor-pointer ${selectedSubmissionId === sub.id
-                                                                    ? 'bg-primary/10 border-primary/30'
-                                                                    : 'bg-muted/20 border-border/40 hover:bg-muted/30'
+                                                                ? 'bg-primary/10 border-primary/30'
+                                                                : 'bg-muted/20 border-border/40 hover:bg-muted/30'
                                                                 }`}
                                                         >
                                                             <div className="flex items-center justify-between">
