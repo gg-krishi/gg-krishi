@@ -287,7 +287,7 @@ async function handleButtonReply(
 
     // Language selection
     if (buttonId === "lang_en" || buttonId === "lang_hi") {
-        if (session.state !== "LANGUAGE_SELECT") {
+        if (session.state !== "LANGUAGE_SELECT" && session.state !== "NAME_CONFIRM") {
             await sendStateGuidance(phone, session);
             return;
         }
@@ -801,10 +801,17 @@ async function sendStateGuidance(phone: string, session: SessionData): Promise<v
             { id: "lang_hi", title: "हिंदी" },
         ]);
     } else if (session.state === "NAME_CONFIRM") {
-        const displayName = session.userName || "Farmer";
-        await sendInteractiveButtons(phone, `Is your name *${displayName}*?`, [
-            { id: "name_yes", title: "✅ Yes" },
-            { id: "name_edit", title: "✏️ Edit" },
+        let displayName = session.userName;
+        if (!displayName) {
+            const u = await prisma.user.findFirst({ where: { phone } });
+            displayName = u?.name || "Farmer";
+        }
+        const nameMsg = lang === "en"
+            ? `Is your name *${displayName}*?`
+            : `क्या आपका नाम *${displayName}* है?`;
+        await sendInteractiveButtons(phone, nameMsg, [
+            { id: "name_yes", title: lang === "en" ? "✅ Yes" : "✅ हाँ" },
+            { id: "name_edit", title: lang === "en" ? "✏️ Edit" : "✏️ बदलें" },
         ]);
     } else if (session.state === "AWAITING_NAME_INPUT") {
         const msg = lang === "en"
