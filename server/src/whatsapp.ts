@@ -487,7 +487,7 @@ async function handleBagEntry(
     });
 
     // Skip gate, go directly to language selection
-    await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
+    await sendInteractiveButtons(phone, "🌱 *GG Krishi* | *GG कृषि*\n\nSelect your language:\nभाषा चुनें:", [
         { id: "lang_en", title: "English" },
         { id: "lang_hi", title: "हिंदी" },
         { id: "btn_need_help", title: "❓ Need Help" },
@@ -796,7 +796,7 @@ async function sendStateGuidance(phone: string, session: SessionData): Promise<v
             : "📸 कृपया नीचे 📎 आइकन टैप करें और मिट्टी पर लगाए गए बायोचार की फोटो भेजें।\n\n*कैमरा* चुनें नई फोटो लेने के लिए, या *गैलरी* से पहले से ली गई फोटो चुनें।";
         await sendWhatsAppMessage(phone, msg);
     } else if (session.state === "LANGUAGE_SELECT") {
-        await sendInteractiveButtons(phone, "🌱 *GG Krishi*\n\nSelect your language:", [
+        await sendInteractiveButtons(phone, "🌱 *GG Krishi* | *GG कृषि*\n\nSelect your language:\nभाषा चुनें:", [
             { id: "lang_en", title: "English" },
             { id: "lang_hi", title: "हिंदी" },
         ]);
